@@ -137,7 +137,7 @@ const runCodingWorkspaceRoutine = async () => {
   const pushFailed = (label, error) => {
     failed.push({
       label,
-      error: error || 'Unknown failure.'
+      error: error || 'Failed to complete operation.'
     });
   };
 
@@ -148,7 +148,7 @@ const runCodingWorkspaceRoutine = async () => {
     const fallbackUrl = 'https://github.dev';
     const safeFallbackUrl = toSafeExternalUrl(fallbackUrl);
     if (!safeFallbackUrl) {
-      pushFailed('VS Code Web', 'Fallback URL blocked.');
+      pushFailed('VS Code Web', 'Fallback URL was blocked or invalid.');
     } else {
       try {
         await shell.openExternal(safeFallbackUrl);
@@ -162,8 +162,8 @@ const runCodingWorkspaceRoutine = async () => {
   const terminalLaunch = await launchWorkspaceTool('terminal');
   if (terminalLaunch?.ok) {
     pushOpened('Terminal');
-  } else if (terminalLaunch?.error) {
-    pushFailed('Terminal', terminalLaunch.error);
+  } else {
+    pushFailed('Terminal', terminalLaunch?.error || 'Terminal launch failed.');
   }
 
   for (const resource of codingWebResources) {

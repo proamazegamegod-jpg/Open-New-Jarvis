@@ -87,6 +87,7 @@ const browserReply = (messageText) => {
 
 const isElectronAvailable =
   typeof window !== 'undefined' && typeof window.electron === 'object' && window.electron !== null;
+const DESKTOP_TOOL_UNAVAILABLE_MESSAGE = 'Unavailable in browser preview.';
 
 const fallbackBridge = {
   isDesktop: false,
@@ -161,8 +162,8 @@ const fallbackBridge = {
   async runCodingWorkspaceRoutine() {
     const opened = [];
     const failed = [
-      { label: 'VS Code', error: 'Unavailable in browser preview.' },
-      { label: 'Terminal', error: 'Unavailable in browser preview.' }
+      { label: 'VS Code', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE },
+      { label: 'Terminal', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE }
     ];
 
     const resources = [

@@ -147,7 +147,7 @@ const DesktopApp = () => {
         await sendMessageWithTextRef.current?.(text);
       }
     } catch (error) {
-      setCommandStatus(error?.message || 'Voice command failed.');
+      setCommandStatus(error?.message || `Voice command "${text}" failed. Please try again.`);
     } finally {
       startVoiceTriggerCooldown();
     }
@@ -186,9 +186,7 @@ const DesktopApp = () => {
         setLastSttAt(Date.now());
 
         if (voiceTriggerArmedRef.current) {
-          void handleVoiceTriggeredTranscript(text).catch((error) => {
-            setCommandStatus(error?.message || 'Voice command failed.');
-          });
+          void handleVoiceTriggeredTranscript(text);
           return;
         }
 
