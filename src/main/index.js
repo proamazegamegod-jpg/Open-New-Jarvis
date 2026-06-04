@@ -1,5 +1,6 @@
-const { app, BrowserWindow } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
+const { app, BrowserWindow } = require('electron');
 const registerIpcHandlers = require('./ipc');
 const { createSttClient } = require('../services/sttClient');
 
@@ -7,6 +8,7 @@ require('dotenv').config();
 
 let mainWindow;
 let sttClient;
+let handlersRegistered = false;
 
 const createWindow = () => {
   mainWindow = new BrowserWindow({
@@ -19,14 +21,22 @@ const createWindow = () => {
     }
   });
 
-  registerIpcHandlers();
+  if (!handlersRegistered) {
+    registerIpcHandlers();
+    handlersRegistered = true;
+  }
 
+  const isDev = !app.isPackaged || process.env.NODE_ENV === 'development';
   const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.loadURL(devServerUrl);
+
+  if (isDev) {
+    mainWindow.loadURL(`${devServerUrl}/app`);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+    const rendererEntry = path.resolve(__dirname, '..', '..', 'dist', 'index.html');
+    const rendererUrl = pathToFileURL(rendererEntry);
+    rendererUrl.hash = '/app';
+    mainWindow.loadURL(rendererUrl.toString());
   }
 
   sttClient = createSttClient({

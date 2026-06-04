@@ -19,7 +19,7 @@ This runs:
 
 ## What is stubbed
 
-- `src/services/geminiClient.js` returns a mock response. **TODO** comment marks where to add the real API call.
+- `src/services/geminiClient.js` calls Gemini using `GEMINI_API_KEY` from `.env`.
 - `src/services/sttClient.js` expects JSON messages from `ws://localhost:9000` and forwards partial transcripts to the renderer.
 - `scripts/stt-server-placeholder.js` emits fake transcript chunks every 1.5s. Replace with faster-whisper output.
 - IPC handlers in `src/main/ipc.js` call stubbed service modules and return JSON.

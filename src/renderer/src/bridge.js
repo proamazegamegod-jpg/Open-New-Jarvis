@@ -4,12 +4,14 @@ const repositoryUrl = 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis';
 export const demoTranscript =
   'Wake word detected. Reviewing the request, validating the command recipe, and preparing a safe dry-run.';
 
+export const assistantGreeting =
+  'Open-New-Jarvis turns speech into a reviewable command recipe, shows the live transcript, and keeps execution gated until you approve it.';
+
 export const demoMessages = [
   {
     id: 'assistant-demo-1',
     role: 'assistant',
-    content:
-      'Open-New-Jarvis can turn a spoken request into a reviewable command recipe, show the live transcript, and keep execution gated until you approve it.'
+    content: assistantGreeting
   }
 ];
 
@@ -53,22 +55,22 @@ const browserReply = (messageText) => {
   const normalized = String(messageText || '').trim().toLowerCase();
 
   if (!normalized) {
-    return 'Ask about workflows, shipping, or command automation and the preview will simulate a response.';
+    return 'Ask about workflows, commands, or voice control and the preview will answer briefly.';
   }
 
   if (normalized.includes('deploy') || normalized.includes('vercel')) {
-    return 'For the web landing page, lead with a clear download CTA, a short product promise, and a polished live preview that nudges users toward the desktop app.';
+    return 'Use a clear download CTA, a short promise, and a polished preview that points to the desktop app.';
   }
 
   if (normalized.includes('command') || normalized.includes('automation')) {
-    return 'Command recipes work best when the trigger, preconditions, rollback steps, and confirmation settings are all visible before execution.';
+    return 'Command recipes should show trigger, steps, and confirmation gates before execution.';
   }
 
   if (normalized.includes('voice') || normalized.includes('transcript')) {
-    return 'Voice-first workflows feel trustworthy when the live transcript stays visible, updates in real time, and remains separate from the assistant response.';
+    return 'Voice workflows work best when the transcript is live, visible, and separate from the answer.';
   }
 
-  return `Preview mode: Open-New-Jarvis would turn "${messageText}" into a guided action plan, a command suggestion, or a follow-up response in the desktop app.`;
+  return `Preview: Open-New-Jarvis would turn "${messageText}" into a short command plan or next step.`;
 };
 
 const isElectronAvailable =

@@ -9,10 +9,7 @@ module.exports = defineConfig({
   base: buildTarget === 'electron' ? './' : '/',
   plugins: [react()],
   build: {
-    outDir:
-      buildTarget === 'electron'
-        ? path.resolve(__dirname, 'dist', 'renderer')
-        : path.resolve(__dirname, 'dist'),
+    outDir: path.resolve(__dirname, 'dist'),
     emptyOutDir: true
   },
   server: {
