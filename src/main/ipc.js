@@ -1,3 +1,4 @@
+const { spawn } = require('child_process');
 const { ipcMain, shell } = require('electron');
 const geminiClient = require('../services/geminiClient');
 const commandService = require('../services/commandService');
@@ -12,6 +13,111 @@ const toSafeExternalUrl = (value) => {
   } catch (_error) {
     return null;
   }
+};
+
+const spawnDetached = (command, args = [], options = {}) =>
+  new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        ...options
+      });
+
+      let settled = false;
+      const finish = (result) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(result);
+      };
+
+      child.once('error', (error) => {
+        finish({
+          ok: false,
+          error: error?.message || `Failed to launch ${command}.`
+        });
+      });
+
+      child.once('spawn', () => {
+        child.unref();
+        finish({ ok: true });
+      });
+    } catch (error) {
+      resolve({
+        ok: false,
+        error: error?.message || `Failed to launch ${command}.`
+      });
+    }
+  });
+
+const workspaceToolAttempts = {
+  vscode: {
+    win32: [
+      { command: 'code', args: [] },
+      { command: 'cmd', args: ['/c', 'start', '', 'code'] }
+    ],
+    darwin: [{ command: 'open', args: ['-a', 'Visual Studio Code'] }],
+    linux: [{ command: 'code', args: [] }]
+  },
+  terminal: {
+    win32: [
+      { command: 'wt', args: [] },
+      { command: 'cmd', args: ['/c', 'start', '', 'wt'] },
+      { command: 'cmd', args: ['/c', 'start', '', 'cmd.exe'] }
+    ],
+    darwin: [{ command: 'open', args: ['-a', 'Terminal'] }],
+    linux: [
+      { command: 'x-terminal-emulator', args: [] },
+      { command: 'gnome-terminal', args: [] },
+      { command: 'konsole', args: [] },
+      { command: 'xterm', args: [] }
+    ]
+  }
+};
+
+const launchWorkspaceTool = async (toolId) => {
+  const normalizedToolId = String(toolId || '')
+    .trim()
+    .toLowerCase();
+  const attemptsByPlatform = workspaceToolAttempts[normalizedToolId];
+  const attempts = attemptsByPlatform?.[process.platform];
+
+  if (!attemptsByPlatform) {
+    return {
+      ok: false,
+      error: `Unsupported workspace tool "${normalizedToolId || 'unknown'}".`
+    };
+  }
+
+  if (!attempts || attempts.length === 0) {
+    return {
+      ok: false,
+      error: `Tool "${normalizedToolId}" is not supported on ${process.platform}.`
+    };
+  }
+
+  const errors = [];
+  for (const attempt of attempts) {
+    const result = await spawnDetached(attempt.command, attempt.args, attempt.options);
+    if (result.ok) {
+      return {
+        ok: true,
+        data: {
+          toolId: normalizedToolId,
+          platform: process.platform
+        }
+      };
+    }
+    errors.push(result.error);
+  }
+
+  return {
+    ok: false,
+    error: errors.filter(Boolean).join(' | ') || `Failed to launch ${normalizedToolId}.`
+  };
 };
 
 const registerIpcHandlers = () => {
@@ -63,6 +169,10 @@ const registerIpcHandlers = () => {
         error: error?.message || 'Failed to open URL.'
       };
     }
+  });
+
+  ipcMain.handle('launchWorkspaceTool', async (_event, toolId) => {
+    return launchWorkspaceTool(toolId);
   });
 };
 

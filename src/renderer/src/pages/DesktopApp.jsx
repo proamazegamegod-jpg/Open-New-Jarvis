@@ -16,6 +16,23 @@ const emptyCommand = {
 const VOICE_TRIGGER_HOLD_MS = 5000;
 const VOICE_TRIGGER_COOLDOWN_MS = 1200;
 const VOICE_OPEN_YOUTUBE_SEARCH_REGEX = /^open youtube and search\s+(.+)$/;
+const VOICE_START_CODING_REGEX = /^start coding(?:\s+.*)?$/;
+
+const codingWebResources = [
+  { id: 'github', label: 'GitHub', url: 'https://github.com' },
+  { id: 'stackoverflow', label: 'Stack Overflow', url: 'https://stackoverflow.com' },
+  { id: 'claude', label: 'Claude', url: 'https://claude.ai' }
+];
+
+const getSttText = (payload) => {
+  if (typeof payload === 'string') {
+    return payload;
+  }
+  if (payload && typeof payload === 'object') {
+    return payload.text ?? payload.partial ?? payload.transcript ?? '';
+  }
+  return '';
+};
 
 const DesktopApp = () => {
   const [transcript, setTranscript] = useState(
@@ -50,6 +67,7 @@ const DesktopApp = () => {
   const voiceTriggerHoldStartedAtRef = useRef(0);
   const voiceTriggerHoldTimerRef = useRef(null);
   const voiceTriggerCooldownTimerRef = useRef(null);
+  const commandStatusTimerRef = useRef(null);
 
   useEffect(() => {
     sttEnabledRef.current = sttEnabled;
@@ -72,6 +90,11 @@ const DesktopApp = () => {
   };
 
   const handleVoiceTriggeredTranscript = async (spokenText) => {
+    if (commandStatusTimerRef.current) {
+      clearTimeout(commandStatusTimerRef.current);
+      commandStatusTimerRef.current = null;
+    }
+
     const text = String(spokenText || '').trim();
     if (!text) {
       voiceTriggerArmedRef.current = false;
@@ -88,9 +111,42 @@ const DesktopApp = () => {
 
     const normalized = text.toLowerCase();
     const youtubeSearchMatch = normalized.match(VOICE_OPEN_YOUTUBE_SEARCH_REGEX);
+    const isStartCoding = VOICE_START_CODING_REGEX.test(normalized);
     const openYouTube = async (url, successMessage, failureMessage) => {
       const response = await electronBridge.openExternalUrl(url);
       setCommandStatus(response?.ok ? successMessage : response?.error || failureMessage);
+    };
+    const runStartCodingRoutine = async () => {
+      const opened = [];
+      const failed = [];
+
+      const pushResult = (label, response, fallbackMessage) => {
+        if (response?.ok) {
+          opened.push(label);
+          return;
+        }
+        failed.push(`${label}${response?.error ? ` (${response.error})` : fallbackMessage ? ` (${fallbackMessage})` : ''}`);
+      };
+
+      const vscodeLaunch = await electronBridge.launchWorkspaceTool('vscode');
+      if (vscodeLaunch?.ok) {
+        opened.push('VS Code');
+      } else {
+        const vscodeFallback = await electronBridge.openExternalUrl('https://github.dev');
+        pushResult('VS Code Web', vscodeFallback, 'VS Code launch unavailable');
+      }
+
+      const terminalLaunch = await electronBridge.launchWorkspaceTool('terminal');
+      pushResult('Terminal', terminalLaunch, 'terminal launch unavailable');
+
+      for (const resource of codingWebResources) {
+        const response = await electronBridge.openExternalUrl(resource.url);
+        pushResult(resource.label, response, 'open failed');
+      }
+
+      const openedMessage = opened.length > 0 ? `Opened: ${opened.join(', ')}.` : 'No resources opened.';
+      const failedMessage = failed.length > 0 ? ` Failed: ${failed.join('; ')}.` : '';
+      setCommandStatus(`Start coding routine complete. ${openedMessage}${failedMessage}`);
     };
 
     try {
@@ -112,6 +168,8 @@ const DesktopApp = () => {
             'Unable to open YouTube search.'
           );
         }
+      } else if (isStartCoding) {
+        await runStartCodingRoutine();
       } else {
         await sendMessageWithTextRef.current?.(text);
       }
@@ -134,18 +192,23 @@ const DesktopApp = () => {
           return;
         }
 
-        const text = payload.text ?? payload.partial ?? payload;
+        const text = getSttText(payload);
+        if (!text) {
+          return;
+        }
         setTranscript(String(text));
         setLastSttAt(Date.now());
       });
       const unsubscribeFinal = electronBridge.onSttFinal((payload) => {
-        if (!payload || !isMounted) {
+        if (!isMounted) {
           return;
         }
-        const text = payload.text ?? '';
+        const text = String(getSttText(payload)).trim();
         if (!text) {
           return;
         }
+
+        setLastSttAt(Date.now());
 
         if (voiceTriggerArmedRef.current) {
           void handleVoiceTriggeredTranscript(text);
@@ -234,6 +297,9 @@ const DesktopApp = () => {
       if (voiceTriggerCooldownTimerRef.current) {
         clearTimeout(voiceTriggerCooldownTimerRef.current);
       }
+      if (commandStatusTimerRef.current) {
+        clearTimeout(commandStatusTimerRef.current);
+      }
     };
   }, []);
 
@@ -311,6 +377,10 @@ const DesktopApp = () => {
       voiceTriggerHoldStartedAtRef.current = Date.now();
       setIsHoldingVoiceTrigger(true);
       setVoiceHoldProgress(0);
+      if (commandStatusTimerRef.current) {
+        clearTimeout(commandStatusTimerRef.current);
+        commandStatusTimerRef.current = null;
+      }
       setCommandStatus('Hold R to 100% to arm voice command mode.');
 
       voiceTriggerHoldTimerRef.current = setInterval(() => {
@@ -331,6 +401,18 @@ const DesktopApp = () => {
           setIsVoiceTriggerArmed(true);
           setTranscript('Voice trigger armed. Speak your command now.');
           setCommandStatus('Voice trigger armed. Waiting for final STT transcript.');
+          if (commandStatusTimerRef.current) {
+            clearTimeout(commandStatusTimerRef.current);
+          }
+          commandStatusTimerRef.current = setTimeout(() => {
+            if (voiceTriggerArmedRef.current) {
+              voiceTriggerArmedRef.current = false;
+              setIsVoiceTriggerArmed(false);
+              setVoiceHoldProgress(0);
+              startVoiceTriggerCooldown();
+              setCommandStatus('Voice trigger timed out. Hold R again to retry.');
+            }
+          }, 12000);
         }
       }, 100);
     };
@@ -475,7 +557,7 @@ const DesktopApp = () => {
       ? 'Voice trigger cooling down...'
       : isHoldingVoiceTrigger
         ? `Hold R progress: ${Math.round(voiceHoldProgress)}%`
-        : 'Hold R for 5 seconds to arm voice command capture.';
+        : 'Hold R for 5 seconds, then say commands like "open youtube" or "start coding".';
 
   const sendMessage = async () => {
     const messageText = input.trim();
