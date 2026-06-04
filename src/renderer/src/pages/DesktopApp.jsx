@@ -18,12 +18,6 @@ const VOICE_TRIGGER_COOLDOWN_MS = 1200;
 const VOICE_OPEN_YOUTUBE_SEARCH_REGEX = /^open youtube and search\s+(.+)$/;
 const VOICE_START_CODING_REGEX = /^start coding(?:\s+.*)?$/;
 
-const codingWebResources = [
-  { id: 'github', label: 'GitHub', url: 'https://github.com' },
-  { id: 'stackoverflow', label: 'Stack Overflow', url: 'https://stackoverflow.com' },
-  { id: 'claude', label: 'Claude', url: 'https://claude.ai' }
-];
-
 const getSttText = (payload) => {
   if (typeof payload === 'string') {
     return payload;
@@ -32,6 +26,17 @@ const getSttText = (payload) => {
     return payload.text ?? payload.partial ?? payload.transcript ?? '';
   }
   return '';
+};
+
+const formatWorkspaceRoutineStatus = (result) => {
+  const opened = Array.isArray(result?.data?.opened) ? result.data.opened : [];
+  const failed = Array.isArray(result?.data?.failed) ? result.data.failed : [];
+  const openedMessage = opened.length > 0 ? `Opened: ${opened.join(', ')}.` : 'No resources opened.';
+  const failedMessage =
+    failed.length > 0
+      ? ` Failed: ${failed.map((item) => `${item.label}${item.error ? ` (${item.error})` : ''}`).join('; ')}.`
+      : '';
+  return `Start coding routine complete. ${openedMessage}${failedMessage}`;
 };
 
 const DesktopApp = () => {
@@ -116,39 +121,6 @@ const DesktopApp = () => {
       const response = await electronBridge.openExternalUrl(url);
       setCommandStatus(response?.ok ? successMessage : response?.error || failureMessage);
     };
-    const runStartCodingRoutine = async () => {
-      const opened = [];
-      const failed = [];
-
-      const pushResult = (label, response, fallbackMessage) => {
-        if (response?.ok) {
-          opened.push(label);
-          return;
-        }
-        failed.push(`${label}${response?.error ? ` (${response.error})` : fallbackMessage ? ` (${fallbackMessage})` : ''}`);
-      };
-
-      const vscodeLaunch = await electronBridge.launchWorkspaceTool('vscode');
-      if (vscodeLaunch?.ok) {
-        opened.push('VS Code');
-      } else {
-        const vscodeFallback = await electronBridge.openExternalUrl('https://github.dev');
-        pushResult('VS Code Web', vscodeFallback, 'VS Code launch unavailable');
-      }
-
-      const terminalLaunch = await electronBridge.launchWorkspaceTool('terminal');
-      pushResult('Terminal', terminalLaunch, 'terminal launch unavailable');
-
-      for (const resource of codingWebResources) {
-        const response = await electronBridge.openExternalUrl(resource.url);
-        pushResult(resource.label, response, 'open failed');
-      }
-
-      const openedMessage = opened.length > 0 ? `Opened: ${opened.join(', ')}.` : 'No resources opened.';
-      const failedMessage = failed.length > 0 ? ` Failed: ${failed.join('; ')}.` : '';
-      setCommandStatus(`Start coding routine complete. ${openedMessage}${failedMessage}`);
-    };
-
     try {
       if (normalized === 'open youtube') {
         await openYouTube('https://www.youtube.com', 'Opened YouTube.', 'Unable to open YouTube.');
@@ -169,10 +141,13 @@ const DesktopApp = () => {
           );
         }
       } else if (isStartCoding) {
-        await runStartCodingRoutine();
+        const routineResult = await electronBridge.runCodingWorkspaceRoutine();
+        setCommandStatus(formatWorkspaceRoutineStatus(routineResult));
       } else {
         await sendMessageWithTextRef.current?.(text);
       }
+    } catch (error) {
+      setCommandStatus(error?.message || 'Voice command failed.');
     } finally {
       startVoiceTriggerCooldown();
     }
@@ -211,7 +186,9 @@ const DesktopApp = () => {
         setLastSttAt(Date.now());
 
         if (voiceTriggerArmedRef.current) {
-          void handleVoiceTriggeredTranscript(text);
+          void handleVoiceTriggeredTranscript(text).catch((error) => {
+            setCommandStatus(error?.message || 'Voice command failed.');
+          });
           return;
         }
 
@@ -442,7 +419,7 @@ const DesktopApp = () => {
       { label: 'Messages', value: String(chatMessages.length) },
       { label: 'Commands', value: String(commandLibrary.length) }
     ],
-    [chatMessages.length, commandLibrary.length, sttStatus]
+    [chatMessages.length, commandLibrary.length, sttConnection, sttStatus]
   );
 
   const startStreaming = useCallback((fullText) => {

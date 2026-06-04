@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electron', {
   saveCommand: (command) => ipcRenderer.invoke('saveCommand', command),
   openExternalUrl: (url) => ipcRenderer.invoke('openExternalUrl', url),
   launchWorkspaceTool: (toolId) => ipcRenderer.invoke('launchWorkspaceTool', toolId),
+  runCodingWorkspaceRoutine: () => ipcRenderer.invoke('runCodingWorkspaceRoutine'),
   onSttPartial: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('stt:partial', listener);
