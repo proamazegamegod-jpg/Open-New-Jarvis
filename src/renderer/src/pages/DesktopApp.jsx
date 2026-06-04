@@ -31,6 +31,7 @@ const DesktopApp = () => {
   const [sttEnabled, setSttEnabled] = useState(true);
   const [lastSttAt, setLastSttAt] = useState(null);
   const [sttStatus, setSttStatus] = useState('Waiting');
+  const [sttConnection, setSttConnection] = useState('Offline');
   const streamTimerRef = useRef(null);
   const requestIdRef = useRef(0);
   const cancelledRequestRef = useRef(null);
@@ -100,9 +101,33 @@ const DesktopApp = () => {
         setFinalTranscript(text);
       });
       const previousUnsubscribe = unsubscribe;
+      const unsubscribeStatus = electronBridge.onSttStatus((payload) => {
+        if (!payload || !isMounted) {
+          return;
+        }
+        if (payload.state === 'connected') {
+          setSttConnection('Connected');
+          return;
+        }
+        if (payload.state === 'disconnected') {
+          setSttConnection('Offline');
+          return;
+        }
+        if (!sttEnabledRef.current) {
+          return;
+        }
+        if (payload.state === 'listening') {
+          setSttStatus('Live');
+        } else if (payload.state === 'processing') {
+          setSttStatus('Processing');
+        } else if (payload.state === 'idling') {
+          setSttStatus('Idle');
+        }
+      });
       unsubscribe = () => {
         previousUnsubscribe();
         unsubscribeFinal();
+        unsubscribeStatus();
       };
     }
 
@@ -132,6 +157,10 @@ const DesktopApp = () => {
         setSttStatus('Off');
         return;
       }
+      if (sttConnection === 'Offline') {
+        setSttStatus('Offline');
+        return;
+      }
       if (!lastSttAt) {
         setSttStatus('Waiting');
         return;
@@ -141,12 +170,12 @@ const DesktopApp = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [lastSttAt]);
+  }, [lastSttAt, sttConnection]);
 
   const memoryItems = useMemo(
     () => [
       { label: 'Mode', value: electronBridge.isDesktop ? 'Desktop live' : 'Browser demo' },
-      { label: 'STT', value: sttStatus },
+      { label: 'STT', value: `${sttStatus}${sttConnection === 'Connected' ? '' : ' (Offline)'}` },
       { label: 'Messages', value: String(chatMessages.length) },
       { label: 'Commands', value: String(commandLibrary.length) }
     ],
@@ -365,6 +394,7 @@ const DesktopApp = () => {
             </p>
             {finalTranscript && <p className="desktop-copy">Final: {finalTranscript}</p>}
             <p className="desktop-copy">STT: {sttStatus}</p>
+            <p className="desktop-copy">Connection: {sttConnection}</p>
             {electronBridge.isDesktop && (
               <div className="stt-actions">
                 <button

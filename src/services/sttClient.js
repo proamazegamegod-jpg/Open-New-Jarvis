@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const createSttClient = ({ url, onPartial, onFinal }) => {
+const createSttClient = ({ url, onPartial, onFinal, onStatus }) => {
   let socket;
   let active = true;
 
@@ -9,6 +9,9 @@ const createSttClient = ({ url, onPartial, onFinal }) => {
 
     socket.on('open', () => {
       console.log(`[stt] connected to ${url}`);
+      if (onStatus) {
+        onStatus({ type: 'status', state: 'connected' });
+      }
     });
 
     socket.on('message', (data) => {
@@ -21,6 +24,11 @@ const createSttClient = ({ url, onPartial, onFinal }) => {
         } catch (error) {
           console.warn('[stt] failed to parse message as JSON', error);
         }
+      }
+
+      if (payload.type === 'status' && onStatus) {
+        onStatus(payload);
+        return;
       }
 
       if (payload.type === 'final' && onFinal) {
@@ -38,6 +46,9 @@ const createSttClient = ({ url, onPartial, onFinal }) => {
         return;
       }
       console.warn('[stt] connection closed, retrying in 1s');
+      if (onStatus) {
+        onStatus({ type: 'status', state: 'disconnected' });
+      }
       setTimeout(connect, 1000);
     });
 

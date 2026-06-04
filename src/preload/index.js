@@ -17,5 +17,10 @@ contextBridge.exposeInMainWorld('electron', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('stt:final', listener);
     return () => ipcRenderer.removeListener('stt:final', listener);
+  },
+  onSttStatus: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('stt:status', listener);
+    return () => ipcRenderer.removeListener('stt:status', listener);
   }
 });

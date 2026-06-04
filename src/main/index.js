@@ -1,6 +1,8 @@
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { app, BrowserWindow } = require('electron');
+const { spawn } = require('child_process');
+const net = require('net');
 const registerIpcHandlers = require('./ipc');
 const { createSttClient } = require('../services/sttClient');
 
@@ -8,6 +10,7 @@ require('dotenv').config();
 
 let mainWindow;
 let sttClient;
+let sttProcess;
 let handlersRegistered = false;
 
 const createWindow = () => {
@@ -52,11 +55,51 @@ const createWindow = () => {
         return;
       }
       mainWindow.webContents.send('stt:final', payload);
+    },
+    onStatus: (payload) => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+      }
+      mainWindow.webContents.send('stt:status', payload);
     }
   });
 };
 
-app.whenReady().then(() => {
+const isPortOpen = (port) =>
+  new Promise((resolve) => {
+    const socket = new net.Socket();
+    const cleanup = (result) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(800);
+    socket.once('connect', () => cleanup(true));
+    socket.once('error', () => cleanup(false));
+    socket.once('timeout', () => cleanup(false));
+    socket.connect(port, '127.0.0.1');
+  });
+
+const ensureSttServer = async () => {
+  const isRunning = await isPortOpen(9000);
+  if (isRunning) {
+    return;
+  }
+
+  const repoRoot = path.resolve(__dirname, '..', '..');
+  const scriptPath = path.join(repoRoot, 'scripts', 'stt-runner.ps1');
+  sttProcess = spawn(
+    'powershell',
+    ['-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+    {
+      cwd: repoRoot,
+      stdio: 'ignore',
+      windowsHide: true
+    }
+  );
+};
+
+app.whenReady().then(async () => {
+  await ensureSttServer();
   createWindow();
 
   app.on('activate', () => {
@@ -69,6 +112,9 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (sttClient) {
     sttClient.stop();
+  }
+  if (sttProcess && !sttProcess.killed) {
+    sttProcess.kill();
   }
 
   if (process.platform !== 'darwin') {
