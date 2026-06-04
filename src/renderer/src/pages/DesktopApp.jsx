@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import electronBridge, {
   assistantGreeting,
@@ -15,6 +15,7 @@ const emptyCommand = {
 };
 const VOICE_TRIGGER_HOLD_MS = 5000;
 const VOICE_TRIGGER_COOLDOWN_MS = 1200;
+const VOICE_OPEN_YOUTUBE_SEARCH_REGEX = /^open youtube and search\s+(.+)$/;
 
 const DesktopApp = () => {
   const [transcript, setTranscript] = useState(
@@ -42,7 +43,6 @@ const DesktopApp = () => {
   const requestIdRef = useRef(0);
   const cancelledRequestRef = useRef(null);
   const sttEnabledRef = useRef(true);
-  const chatMessagesRef = useRef(demoMessages);
   const sendMessageWithTextRef = useRef(null);
   const voiceTriggerArmedRef = useRef(false);
   const voiceTriggerCoolingDownRef = useRef(false);
@@ -54,10 +54,6 @@ const DesktopApp = () => {
   useEffect(() => {
     sttEnabledRef.current = sttEnabled;
   }, [sttEnabled]);
-
-  useEffect(() => {
-    chatMessagesRef.current = chatMessages;
-  }, [chatMessages]);
 
   const startVoiceTriggerCooldown = () => {
     if (voiceTriggerCooldownTimerRef.current) {
@@ -91,26 +87,29 @@ const DesktopApp = () => {
     setLastSttAt(Date.now());
 
     const normalized = text.toLowerCase();
-    const youtubeSearchMatch = normalized.match(/^open youtube and search\s+(.+)$/i);
+    const youtubeSearchMatch = normalized.match(VOICE_OPEN_YOUTUBE_SEARCH_REGEX);
+    const openYouTube = async (url, successMessage, failureMessage) => {
+      const response = await electronBridge.openExternalUrl(url);
+      setCommandStatus(response?.ok ? successMessage : response?.error || failureMessage);
+    };
 
     try {
       if (normalized === 'open youtube') {
-        const response = await electronBridge.openExternalUrl('https://www.youtube.com');
-        setCommandStatus(response?.ok ? 'Opened YouTube.' : response?.error || 'Unable to open YouTube.');
+        await openYouTube('https://www.youtube.com', 'Opened YouTube.', 'Unable to open YouTube.');
       } else if (youtubeSearchMatch) {
         const query = youtubeSearchMatch[1]?.trim();
         if (!query) {
-          const response = await electronBridge.openExternalUrl('https://www.youtube.com');
-          setCommandStatus(
-            response?.ok ? 'Opened YouTube.' : response?.error || 'Unable to open YouTube.'
+          await openYouTube(
+            'https://www.youtube.com',
+            'Opened YouTube.',
+            'Unable to open YouTube.'
           );
         } else {
           const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-          const response = await electronBridge.openExternalUrl(url);
-          setCommandStatus(
-            response?.ok
-              ? `Opened YouTube search for "${query}".`
-              : response?.error || 'Unable to open YouTube search.'
+          await openYouTube(
+            url,
+            `Opened YouTube search for "${query}".`,
+            'Unable to open YouTube search.'
           );
         }
       } else {
@@ -286,7 +285,7 @@ const DesktopApp = () => {
       }
 
       const element = target;
-      const tag = String(element.tagName || '').toLowerCase();
+      const tag = element.tagName?.toLowerCase();
       return (
         tag === 'input' ||
         tag === 'textarea' ||
@@ -296,7 +295,7 @@ const DesktopApp = () => {
     };
 
     const onKeyDown = (event) => {
-      if (String(event.key || '').toLowerCase() !== 'r') {
+      if (event.key?.toLowerCase() !== 'r') {
         return;
       }
 
@@ -337,7 +336,7 @@ const DesktopApp = () => {
     };
 
     const onKeyUp = (event) => {
-      if (String(event.key || '').toLowerCase() !== 'r') {
+      if (event.key?.toLowerCase() !== 'r') {
         return;
       }
 
@@ -364,7 +363,7 @@ const DesktopApp = () => {
     [chatMessages.length, commandLibrary.length, sttStatus]
   );
 
-  const startStreaming = (fullText) => {
+  const startStreaming = useCallback((fullText) => {
     if (streamTimerRef.current) {
       clearInterval(streamTimerRef.current);
     }
@@ -392,7 +391,7 @@ const DesktopApp = () => {
         setIsStreaming(false);
       }
     }, 35);
-  };
+  }, []);
 
   const stopStreaming = () => {
     cancelledRequestRef.current = requestIdRef.current;
@@ -423,7 +422,7 @@ const DesktopApp = () => {
     setChatMessages(previous);
   };
 
-  const sendMessageWithText = async (messageText) => {
+  const sendMessageWithText = useCallback(async (messageText) => {
     const trimmed = String(messageText || '').trim();
     if (!trimmed) {
       return;
@@ -437,7 +436,7 @@ const DesktopApp = () => {
       role: 'user',
       content: trimmed
     };
-    const nextMessages = [...chatMessagesRef.current, outgoingMessage];
+    const nextMessages = [...chatMessages, outgoingMessage];
 
     setChatMessages(nextMessages);
     setInput('');
@@ -464,9 +463,19 @@ const DesktopApp = () => {
     }
 
     startStreaming(response.data?.content || 'No response returned.');
-  };
+  }, [chatMessages, startStreaming]);
 
-  sendMessageWithTextRef.current = sendMessageWithText;
+  useEffect(() => {
+    sendMessageWithTextRef.current = sendMessageWithText;
+  }, [sendMessageWithText]);
+
+  const voiceTriggerMessage = isVoiceTriggerArmed
+    ? 'Voice trigger is active and waiting for your next spoken command.'
+    : isVoiceTriggerCoolingDown
+      ? 'Voice trigger cooling down...'
+      : isHoldingVoiceTrigger
+        ? `Hold R progress: ${Math.round(voiceHoldProgress)}%`
+        : 'Hold R for 5 seconds to arm voice command capture.';
 
   const sendMessage = async () => {
     const messageText = input.trim();
@@ -582,13 +591,7 @@ const DesktopApp = () => {
             {electronBridge.isDesktop && (
               <>
                 <p className="desktop-copy">
-                  {isVoiceTriggerArmed
-                    ? 'Voice trigger is active and waiting for your next spoken command.'
-                    : isVoiceTriggerCoolingDown
-                      ? 'Voice trigger cooling down...'
-                      : isHoldingVoiceTrigger
-                        ? `Hold R progress: ${Math.round(voiceHoldProgress)}%`
-                        : 'Hold R for 5 seconds to arm voice command capture.'}
+                  {voiceTriggerMessage}
                 </p>
                 <div className="voice-hold-progress" aria-hidden="true">
                   <div

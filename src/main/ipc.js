@@ -4,7 +4,7 @@ const commandService = require('../services/commandService');
 
 const toSafeExternalUrl = (value) => {
   try {
-    const parsed = new URL(String(value || ''));
+    const parsed = new URL(value);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       return null;
     }
@@ -52,10 +52,17 @@ const registerIpcHandlers = () => {
       };
     }
 
-    await shell.openExternal(safeUrl);
-    return {
-      ok: true
-    };
+    try {
+      await shell.openExternal(safeUrl);
+      return {
+        ok: true
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || 'Failed to open URL.'
+      };
+    }
   });
 };
 
