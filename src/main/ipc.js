@@ -78,6 +78,12 @@ const workspaceToolAttempts = {
   }
 };
 
+const codingWebResources = [
+  { id: 'github', label: 'GitHub', url: 'https://github.com' },
+  { id: 'stackoverflow', label: 'Stack Overflow', url: 'https://stackoverflow.com' },
+  { id: 'claude', label: 'Claude', url: 'https://claude.ai' }
+];
+
 const launchWorkspaceTool = async (toolId) => {
   const normalizedToolId = String(toolId || '')
     .trim()
@@ -117,6 +123,77 @@ const launchWorkspaceTool = async (toolId) => {
   return {
     ok: false,
     error: errors.filter(Boolean).join(' | ') || `Failed to launch ${normalizedToolId}.`
+  };
+};
+
+const runCodingWorkspaceRoutine = async () => {
+  const opened = [];
+  const failed = [];
+
+  const pushOpened = (label) => {
+    opened.push(label);
+  };
+
+  const pushFailed = (label, error) => {
+    failed.push({
+      label,
+      error: error || 'Failed to complete operation.'
+    });
+  };
+
+  const vscodeLaunch = await launchWorkspaceTool('vscode');
+  if (vscodeLaunch?.ok) {
+    pushOpened('VS Code');
+  } else {
+    const fallbackUrl = 'https://github.dev';
+    const safeFallbackUrl = toSafeExternalUrl(fallbackUrl);
+    if (!safeFallbackUrl) {
+      pushFailed('VS Code Web', 'Fallback URL was blocked or invalid.');
+    } else {
+      try {
+        await shell.openExternal(safeFallbackUrl);
+        pushOpened('VS Code Web');
+      } catch (error) {
+        pushFailed('VS Code Web', error?.message || 'Failed to open VS Code web fallback.');
+      }
+    }
+  }
+
+  const terminalLaunch = await launchWorkspaceTool('terminal');
+  if (terminalLaunch?.ok) {
+    pushOpened('Terminal');
+  } else {
+    pushFailed('Terminal', terminalLaunch?.error || 'Terminal launch failed.');
+  }
+
+  for (const resource of codingWebResources) {
+    const safeUrl = toSafeExternalUrl(resource.url);
+    if (!safeUrl) {
+      pushFailed(resource.label, 'Blocked unsafe URL.');
+      continue;
+    }
+
+    try {
+      await shell.openExternal(safeUrl);
+      pushOpened(resource.label);
+    } catch (error) {
+      pushFailed(resource.label, error?.message || 'Failed to open URL.');
+    }
+  }
+
+  const summary =
+    opened.length > 0
+      ? `Opened: ${opened.join(', ')}`
+      : 'No workspace resources were opened.';
+
+  return {
+    ok: failed.length === 0,
+    data: {
+      opened,
+      failed,
+      summary
+    },
+    error: failed.length > 0 ? failed.map((item) => `${item.label}: ${item.error}`).join(' | ') : undefined
   };
 };
 
@@ -173,6 +250,10 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle('launchWorkspaceTool', async (_event, toolId) => {
     return launchWorkspaceTool(toolId);
+  });
+
+  ipcMain.handle('runCodingWorkspaceRoutine', async () => {
+    return runCodingWorkspaceRoutine();
   });
 };
 

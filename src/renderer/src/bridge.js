@@ -87,6 +87,7 @@ const browserReply = (messageText) => {
 
 const isElectronAvailable =
   typeof window !== 'undefined' && typeof window.electron === 'object' && window.electron !== null;
+const DESKTOP_TOOL_UNAVAILABLE_MESSAGE = 'Unavailable in browser preview.';
 
 const fallbackBridge = {
   isDesktop: false,
@@ -156,6 +157,45 @@ const fallbackBridge = {
     return {
       ok: false,
       error: 'Desktop tool launching is available in the desktop app.'
+    };
+  },
+  async runCodingWorkspaceRoutine() {
+    const opened = [];
+    const failed = [
+      { label: 'VS Code', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE },
+      { label: 'Terminal', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE }
+    ];
+
+    const resources = [
+      { label: 'VS Code Web', url: 'https://github.dev' },
+      { label: 'GitHub', url: 'https://github.com' },
+      { label: 'Stack Overflow', url: 'https://stackoverflow.com' },
+      { label: 'Claude', url: 'https://claude.ai' }
+    ];
+
+    for (const resource of resources) {
+      const response = await fallbackBridge.openExternalUrl(resource.url);
+      if (response?.ok) {
+        opened.push(resource.label);
+      } else {
+        failed.push({
+          label: resource.label,
+          error: response?.error || 'Failed to open URL.'
+        });
+      }
+    }
+
+    return {
+      ok: failed.length === 0,
+      data: {
+        opened,
+        failed,
+        summary:
+          opened.length > 0
+            ? `Opened: ${opened.join(', ')}`
+            : 'No workspace resources were opened.'
+      },
+      error: failed.length > 0 ? failed.map((item) => `${item.label}: ${item.error}`).join(' | ') : undefined
     };
   },
   onSttPartial() {
