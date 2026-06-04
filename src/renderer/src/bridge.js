@@ -122,6 +122,16 @@ const fallbackBridge = {
       error: 'Saving commands is available in the desktop app.'
     };
   },
+  async openExternalUrl(url) {
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(String(url || ''), '_blank', 'noopener,noreferrer');
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: 'Opening URLs is unavailable.'
+    };
+  },
   onSttPartial() {
     return () => {};
   },
