@@ -3,3 +3,6 @@ dist/
 .env
 __pycache__/
 *.pyc
+release/**/win-unpacked/
+release/**/builder-debug.yml
+release/**/builder-effective-config.yaml

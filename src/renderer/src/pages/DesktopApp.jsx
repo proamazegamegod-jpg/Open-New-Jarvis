@@ -1,873 +1,704 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import electronBridge, {
-  assistantGreeting,
-  demoCommands,
-  demoMessages,
-  demoTranscript
-} from '../bridge.js';
+import React, { useEffect, useRef, useState } from 'react';
+import electronBridge, { demoCommands, demoTranscript } from '../bridge.js';
+import VoiceBar from '../components/VoiceBar.jsx';
+import WorkflowList from '../components/WorkflowList.jsx';
+import ExecutionStatus from '../components/ExecutionStatus.jsx';
+import WorkflowEditorModal from '../components/WorkflowEditorModal.jsx';
+import WorkflowPromptModal from '../components/WorkflowPromptModal.jsx';
+import CommandBar from '../components/CommandBar.jsx';
+import '../workflow-app.css';
 
-const emptyCommand = {
-  id: '',
-  trigger: '',
-  steps: [''],
-  confirm: false
-};
-const VOICE_TRIGGER_HOLD_MS = 5000;
-const VOICE_TRIGGER_COOLDOWN_MS = 1200;
-const VOICE_OPEN_YOUTUBE_SEARCH_REGEX = /^open youtube and search\s+(.+)$/;
-const VOICE_START_CODING_REGEX = /^start coding(?:\s+.*)?$/;
+const VOICE_TRIGGER_DEDUPE_MS = 60000;
+const TRANSCRIPT_REFRESH_MS = 1000;
+const STT_CLEAR_GUARD_MS = 2500;
 
-const getSttText = (payload) => {
-  if (typeof payload === 'string') {
-    return payload;
+const createIdleExecutionState = () => ({
+  phase: 'idle',
+  workflowId: '',
+  workflowName: '',
+  message: 'Click Run, type a workflow name, or use voice to start.',
+  steps: []
+});
+
+const normalizeTriggerText = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+const tokenizeText = (value) => normalizeTriggerText(value).split(' ').filter(Boolean);
+
+const hasOrderedWordMatch = (messageWords, candidateWords) => {
+  if (candidateWords.length < 2) {
+    return false;
   }
-  if (payload && typeof payload === 'object') {
-    return payload.text ?? payload.partial ?? payload.transcript ?? '';
+
+  let candidateIndex = 0;
+
+  for (const word of messageWords) {
+    if (word === candidateWords[candidateIndex]) {
+      candidateIndex += 1;
+      if (candidateIndex === candidateWords.length) {
+        return true;
+      }
+    }
   }
-  return '';
+
+  return false;
 };
 
-const formatWorkspaceRoutineStatus = (result) => {
-  const opened = Array.isArray(result?.data?.opened) ? result.data.opened : [];
-  const failed = Array.isArray(result?.data?.failed) ? result.data.failed : [];
-  const openedMessage = opened.length > 0 ? `Opened: ${opened.join(', ')}.` : 'No resources opened.';
-  const failedMessage =
-    failed.length > 0
-      ? ` Failed: ${failed.map((item) => `${item.label}${item.error ? ` (${item.error})` : ''}`).join('; ')}.`
-      : '';
-  return `Start coding routine complete. ${openedMessage}${failedMessage}`;
+const getCandidateMatchScore = (normalizedMessage, messageWords, candidate) => {
+  if (!candidate) {
+    return 0;
+  }
+
+  if (normalizedMessage === candidate) {
+    return 400 + candidate.length;
+  }
+
+  if (normalizedMessage.includes(candidate)) {
+    return 300 + candidate.length;
+  }
+
+  const candidateWords = candidate.split(' ').filter(Boolean);
+  if (hasOrderedWordMatch(messageWords, candidateWords)) {
+    return 200 + candidateWords.length * 10;
+  }
+
+  if (candidate.length >= 5 && candidate.includes(normalizedMessage)) {
+    return 120 + normalizedMessage.length;
+  }
+
+  return 0;
 };
+
+const isStartListeningCommand = (value) => {
+  const normalized = normalizeTriggerText(value);
+  return (
+    normalized === 'start' ||
+    normalized.includes('start listening') ||
+    normalized.includes('resume listening')
+  );
+};
+
+const isStopListeningCommand = (value) => {
+  const normalized = normalizeTriggerText(value);
+  return (
+    normalized === 'stop' ||
+    normalized.includes('stop listening') ||
+    normalized.includes('stop transcription')
+  );
+};
+
+const getWorkflowName = (workflow) => workflow?.name || workflow?.id || 'Workflow';
+
+const createStepStatuses = (workflow) =>
+  (workflow?.steps || []).map((step, index) => ({
+    id: `${workflow.id || 'workflow'}-${index}`,
+    label: step,
+    status: 'pending'
+  }));
 
 const DesktopApp = () => {
-  const [transcript, setTranscript] = useState(
-    electronBridge.isDesktop ? '' : demoTranscript
-  );
+  const [transcript, setTranscript] = useState(electronBridge.isDesktop ? '' : demoTranscript);
   const [finalTranscript, setFinalTranscript] = useState('');
   const [input, setInput] = useState('');
-  const [chatMessages, setChatMessages] = useState(demoMessages);
-  const [conversationHistory, setConversationHistory] = useState([]);
   const [commandLibrary, setCommandLibrary] = useState(demoCommands);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
-  const [editorCommand, setEditorCommand] = useState(emptyCommand);
-  const [validationResult, setValidationResult] = useState(null);
-  const [commandStatus, setCommandStatus] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [editingWorkflow, setEditingWorkflow] = useState(null);
+  const [createError, setCreateError] = useState('');
+  const [editorError, setEditorError] = useState('');
+  const [isCreatingWorkflow, setIsCreatingWorkflow] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
   const [sttEnabled, setSttEnabled] = useState(true);
-  const [lastSttAt, setLastSttAt] = useState(null);
-  const [sttStatus, setSttStatus] = useState('Waiting');
-  const [sttConnection, setSttConnection] = useState('Offline');
-  const [isHoldingVoiceTrigger, setIsHoldingVoiceTrigger] = useState(false);
-  const [voiceHoldProgress, setVoiceHoldProgress] = useState(0);
-  const [isVoiceTriggerArmed, setIsVoiceTriggerArmed] = useState(false);
-  const [isVoiceTriggerCoolingDown, setIsVoiceTriggerCoolingDown] = useState(false);
-  const streamTimerRef = useRef(null);
-  const requestIdRef = useRef(0);
-  const cancelledRequestRef = useRef(null);
+  const [sttStatus, setSttStatus] = useState(electronBridge.isDesktop ? 'Waiting' : 'Preview');
+  const [sttConnection, setSttConnection] = useState(
+    electronBridge.isDesktop ? 'Offline' : 'Preview'
+  );
+  const [sttMessage, setSttMessage] = useState(
+    electronBridge.isDesktop ? 'Voice control is offline.' : demoTranscript
+  );
+  const [executionState, setExecutionState] = useState(createIdleExecutionState);
   const sttEnabledRef = useRef(true);
-  const sendMessageWithTextRef = useRef(null);
-  const voiceTriggerArmedRef = useRef(false);
-  const voiceTriggerCoolingDownRef = useRef(false);
-  const voiceTriggerKeyDownRef = useRef(false);
-  const voiceTriggerHoldStartedAtRef = useRef(0);
-  const voiceTriggerHoldTimerRef = useRef(null);
-  const voiceTriggerCooldownTimerRef = useRef(null);
-  const commandStatusTimerRef = useRef(null);
+  const commandLibraryRef = useRef(commandLibrary);
+  const transcriptRef = useRef(transcript);
+  const lastTriggerRef = useRef({ text: '', workflowId: '', at: 0 });
+  const transcriptIgnoreUntilRef = useRef(0);
+  const geminiMatchInFlightRef = useRef(false);
 
   useEffect(() => {
     sttEnabledRef.current = sttEnabled;
   }, [sttEnabled]);
 
-  const startVoiceTriggerCooldown = () => {
-    if (voiceTriggerCooldownTimerRef.current) {
-      clearTimeout(voiceTriggerCooldownTimerRef.current);
-      voiceTriggerCooldownTimerRef.current = null;
-    }
+  useEffect(() => {
+    commandLibraryRef.current = commandLibrary;
+  }, [commandLibrary]);
 
-    voiceTriggerCoolingDownRef.current = true;
-    setIsVoiceTriggerCoolingDown(true);
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
 
-    voiceTriggerCooldownTimerRef.current = setTimeout(() => {
-      voiceTriggerCoolingDownRef.current = false;
-      setIsVoiceTriggerCoolingDown(false);
-      voiceTriggerCooldownTimerRef.current = null;
-    }, VOICE_TRIGGER_COOLDOWN_MS);
-  };
-
-  const handleVoiceTriggeredTranscript = async (spokenText) => {
-    if (commandStatusTimerRef.current) {
-      clearTimeout(commandStatusTimerRef.current);
-      commandStatusTimerRef.current = null;
-    }
-
-    const text = String(spokenText || '').trim();
-    if (!text) {
-      voiceTriggerArmedRef.current = false;
-      setIsVoiceTriggerArmed(false);
-      startVoiceTriggerCooldown();
-      return;
-    }
-
-    voiceTriggerArmedRef.current = false;
-    setIsVoiceTriggerArmed(false);
-    setFinalTranscript(text);
-    setTranscript(`Voice command: ${text}`);
-    setLastSttAt(Date.now());
-
-    const normalized = text.toLowerCase();
-    const youtubeSearchMatch = normalized.match(VOICE_OPEN_YOUTUBE_SEARCH_REGEX);
-    const isStartCoding = VOICE_START_CODING_REGEX.test(normalized);
-    const openYouTube = async (url, successMessage, failureMessage) => {
-      const response = await electronBridge.openExternalUrl(url);
-      setCommandStatus(response?.ok ? successMessage : response?.error || failureMessage);
-    };
-    try {
-      if (normalized === 'open youtube') {
-        await openYouTube('https://www.youtube.com', 'Opened YouTube.', 'Unable to open YouTube.');
-      } else if (youtubeSearchMatch) {
-        const query = youtubeSearchMatch[1]?.trim();
-        if (!query) {
-          await openYouTube(
-            'https://www.youtube.com',
-            'Opened YouTube.',
-            'Unable to open YouTube.'
-          );
-        } else {
-          const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
-          await openYouTube(
-            url,
-            `Opened YouTube search for "${query}".`,
-            'Unable to open YouTube search.'
-          );
-        }
-      } else if (isStartCoding) {
-        const routineResult = await electronBridge.runCodingWorkspaceRoutine();
-        setCommandStatus(formatWorkspaceRoutineStatus(routineResult));
-      } else {
-        await sendMessageWithTextRef.current?.(text);
+  const refreshCommandArea = async (message) => {
+    setInput('');
+    setFinalTranscript('');
+    if (electronBridge.isDesktop) {
+      const sttResponse = await electronBridge.clearSttContext();
+      if (sttResponse?.ok) {
+        const nextTranscript = String(sttResponse.data?.transcript || '');
+        setTranscript(nextTranscript);
+        transcriptRef.current = nextTranscript;
+        setSttMessage(String(sttResponse.data?.message || ''));
+        setSttStatus(sttResponse.data?.status || 'Waiting');
+        setSttConnection(sttResponse.data?.connection || 'Offline');
       }
-    } catch (error) {
-      setCommandStatus(error?.message || `Voice command "${text}" failed. Please try again.`);
-    } finally {
-      startVoiceTriggerCooldown();
+    } else {
+      transcriptRef.current = '';
+      setTranscript('');
+      setSttMessage('');
+    }
+    if (message) {
+      setStatusMessage(message);
+    }
+
+    const response = await electronBridge.listCommands();
+    if (response?.ok && Array.isArray(response.data) && response.data.length > 0) {
+      setCommandLibrary(response.data);
     }
   };
+
+  const shouldIgnoreTranscript = () => Date.now() < transcriptIgnoreUntilRef.current;
 
   useEffect(() => {
     let isMounted = true;
-    let unsubscribe = () => {};
+    let unsubscribeStt = () => {};
+    let unsubscribeProgress = () => {};
 
     if (electronBridge.isDesktop) {
-      unsubscribe = electronBridge.onSttPartial((payload) => {
+      const syncSttState = (payload) => {
         if (!payload || !isMounted) {
           return;
         }
 
-        if (!sttEnabledRef.current) {
-          return;
+        setSttEnabled(Boolean(payload.enabled));
+        setSttStatus(payload.status || 'Waiting');
+        setSttConnection(payload.connection || 'Offline');
+        setSttMessage(String(payload.message || ''));
+        const nextTranscript = String(payload.transcript || '');
+        setTranscript(nextTranscript);
+        transcriptRef.current = nextTranscript;
+        if (!nextTranscript) {
+          setFinalTranscript('');
         }
+      };
 
-        const text = getSttText(payload);
-        if (!text) {
+      electronBridge.getSttState().then((response) => {
+        if (!response?.ok) {
           return;
         }
-        setTranscript(String(text));
-        setLastSttAt(Date.now());
+        syncSttState(response.data);
       });
-      const unsubscribeFinal = electronBridge.onSttFinal((payload) => {
-        if (!isMounted) {
+
+      const unsubscribePartial = electronBridge.onSttPartial((payload) => {
+        if (!payload || !isMounted || !sttEnabledRef.current || shouldIgnoreTranscript()) {
           return;
         }
-        const text = String(getSttText(payload)).trim();
+
+        const text = String(payload.text ?? payload.partial ?? payload).trim();
+        setTranscript(text);
+        transcriptRef.current = text;
+      });
+
+      const unsubscribeFinal = electronBridge.onSttFinal((payload) => {
+        if (!payload || !isMounted || shouldIgnoreTranscript()) {
+          return;
+        }
+
+        const text = String(payload.text ?? '').trim();
         if (!text) {
           return;
         }
 
-        setLastSttAt(Date.now());
-
-        if (voiceTriggerArmedRef.current) {
-          void handleVoiceTriggeredTranscript(text);
+        if (isStartListeningCommand(text)) {
+          setFinalTranscript('');
+          void electronBridge.setSttEnabled(true).then((response) => {
+            if (response?.ok) {
+              syncSttState(response.data);
+            }
+          });
           return;
         }
 
-        const normalized = text.toLowerCase().trim();
-        const isStopCommand =
-          normalized === 'stop' ||
-          normalized.includes('stop listening') ||
-          normalized.includes('stop transcription');
-        const isStartCommand =
-          normalized === 'start' ||
-          normalized.includes('start listening') ||
-          normalized.includes('resume listening');
-
-        if (isStartCommand) {
-          setSttEnabled(true);
-          setTranscript('STT resumed.');
-          setFinalTranscript(text);
-          setLastSttAt(Date.now());
+        if (isStopListeningCommand(text)) {
+          setFinalTranscript('');
+          void electronBridge.setSttEnabled(false).then((response) => {
+            if (response?.ok) {
+              syncSttState(response.data);
+            }
+          });
           return;
         }
 
         if (!sttEnabledRef.current) {
-          return;
-        }
-
-        if (isStopCommand) {
-          setSttEnabled(false);
-          setTranscript('STT paused.');
-          setFinalTranscript(text);
-          setLastSttAt(Date.now());
           return;
         }
 
         setFinalTranscript(text);
+        setTranscript(text);
+        transcriptRef.current = text;
       });
-      const previousUnsubscribe = unsubscribe;
-      const unsubscribeStatus = electronBridge.onSttStatus((payload) => {
+
+      const unsubscribeState = electronBridge.onSttState(syncSttState);
+
+      unsubscribeStt = () => {
+        unsubscribePartial();
+        unsubscribeFinal();
+        unsubscribeState();
+      };
+
+      unsubscribeProgress = electronBridge.onWorkflowProgress((payload) => {
         if (!payload || !isMounted) {
           return;
         }
-        if (payload.state === 'connected') {
-          setSttConnection('Connected');
-          return;
-        }
-        if (payload.state === 'disconnected') {
-          setSttConnection('Offline');
-          return;
-        }
-        if (!sttEnabledRef.current) {
-          return;
-        }
-        if (payload.state === 'listening') {
-          setSttStatus('Live');
-        } else if (payload.state === 'processing') {
-          setSttStatus('Processing');
-        } else if (payload.state === 'idling') {
-          setSttStatus('Idle');
-        }
+
+        const workflow = commandLibraryRef.current.find((item) => item.id === payload.workflowId) || {
+          id: payload.workflowId,
+          name: payload.workflowId,
+          steps: []
+        };
+
+        setExecutionState((previous) => {
+          const nextSteps =
+            previous.workflowId === payload.workflowId && previous.steps.length > 0
+              ? [...previous.steps]
+              : createStepStatuses(workflow);
+
+          nextSteps[payload.actionIndex] = {
+            id: `${payload.workflowId}-${payload.actionIndex}`,
+            label:
+              payload.description ||
+              nextSteps[payload.actionIndex]?.label ||
+              `Step ${payload.actionIndex + 1}`,
+            status: payload.status
+          };
+
+          return {
+            phase: payload.status === 'failed' ? 'failed' : 'running',
+            workflowId: payload.workflowId,
+            workflowName: getWorkflowName(workflow),
+            message:
+              payload.status === 'failed'
+                ? payload.error || 'A workflow step failed.'
+                : payload.status === 'completed'
+                  ? 'Finishing workflow...'
+                  : payload.description || 'Running workflow...',
+            steps: nextSteps
+          };
+        });
       });
-      unsubscribe = () => {
-        previousUnsubscribe();
-        unsubscribeFinal();
-        unsubscribeStatus();
-      };
     }
 
     electronBridge.listCommands().then((result) => {
-      if (isMounted && result?.ok && Array.isArray(result.data) && result.data.length > 0) {
-        setCommandLibrary(result.data);
+      if (!isMounted || !result?.ok || !Array.isArray(result.data) || result.data.length === 0) {
+        return;
       }
+      setCommandLibrary(result.data);
     });
 
     return () => {
       isMounted = false;
-      unsubscribe();
-
-      if (streamTimerRef.current) {
-        clearInterval(streamTimerRef.current);
-      }
-      if (voiceTriggerHoldTimerRef.current) {
-        clearInterval(voiceTriggerHoldTimerRef.current);
-      }
-      if (voiceTriggerCooldownTimerRef.current) {
-        clearTimeout(voiceTriggerCooldownTimerRef.current);
-      }
-      if (commandStatusTimerRef.current) {
-        clearTimeout(commandStatusTimerRef.current);
-      }
+      unsubscribeStt();
+      unsubscribeProgress();
     };
   }, []);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!electronBridge.isDesktop) {
-        setSttStatus('Preview');
-        return;
-      }
-      if (!sttEnabledRef.current) {
-        setSttStatus('Off');
-        return;
-      }
-      if (sttConnection === 'Offline') {
-        setSttStatus('Offline');
-        return;
-      }
-      if (!lastSttAt) {
-        setSttStatus('Waiting');
-        return;
-      }
-      const delta = Date.now() - lastSttAt;
-      setSttStatus(delta < 4000 ? 'Live' : 'Idle');
-    }, 1000);
+  const toggleListening = async () => {
+    if (!electronBridge.isDesktop) {
+      return;
+    }
 
-    return () => clearInterval(interval);
-  }, [lastSttAt, sttConnection]);
+    const response = await electronBridge.setSttEnabled(!sttEnabled);
+    if (!response?.ok) {
+      setStatusMessage(response?.error || 'Could not update voice control.');
+      return;
+    }
+
+    setSttEnabled(Boolean(response.data?.enabled));
+    setSttStatus(response.data?.status || 'Waiting');
+    setSttConnection(response.data?.connection || 'Offline');
+    setSttMessage(String(response.data?.message || ''));
+    const nextTranscript = String(response.data?.transcript || '');
+    setTranscript(nextTranscript);
+    transcriptRef.current = nextTranscript;
+    if (!nextTranscript) {
+      setFinalTranscript('');
+    }
+  };
+
+  const findMatchingWorkflow = (messageText) => {
+    const normalizedMessage = normalizeTriggerText(messageText);
+    if (!normalizedMessage) {
+      return null;
+    }
+
+    const messageWords = tokenizeText(messageText);
+    let bestMatch = null;
+    let bestScore = 0;
+
+    commandLibraryRef.current.forEach((workflow) => {
+      const candidates = [
+        normalizeTriggerText(workflow.trigger),
+        normalizeTriggerText(workflow.name),
+        normalizeTriggerText(workflow.id)
+      ].filter(Boolean);
+
+      const score = candidates.reduce((highest, candidate) => {
+        const candidateScore = getCandidateMatchScore(normalizedMessage, messageWords, candidate);
+        return Math.max(highest, candidateScore);
+      }, 0);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = workflow;
+      }
+    });
+
+    return bestMatch;
+  };
+
+  const resolveWorkflowMatch = async (messageText, source) => {
+    const localMatch = findMatchingWorkflow(messageText);
+    if (localMatch) {
+      return localMatch;
+    }
+
+    if (!source.startsWith('voice') || geminiMatchInFlightRef.current) {
+      return null;
+    }
+
+    geminiMatchInFlightRef.current = true;
+
+    try {
+      const response = await electronBridge.matchWorkflowIntent(messageText);
+      if (!response?.ok) {
+        return null;
+      }
+
+      return response.data?.workflow || null;
+    } finally {
+      geminiMatchInFlightRef.current = false;
+    }
+  };
+
+  const runWorkflow = async (workflow, source = 'click') => {
+    setStatusMessage('');
+    setExecutionState({
+      phase: 'running',
+      workflowId: workflow.id,
+      workflowName: getWorkflowName(workflow),
+      message: `Running from ${source}.`,
+      steps: createStepStatuses(workflow)
+    });
+
+    const response = await electronBridge.executeCommand(workflow);
+    if (response?.ok) {
+      setExecutionState((previous) => ({
+        ...previous,
+        phase: 'done',
+        message: response.data?.result || 'Workflow finished.',
+        steps:
+          previous.steps.length > 0
+            ? previous.steps.map((step) => ({
+                ...step,
+                status: step.status === 'failed' ? 'failed' : 'completed'
+              }))
+            : previous.steps
+      }));
+      transcriptIgnoreUntilRef.current = Date.now() + STT_CLEAR_GUARD_MS;
+      await refreshCommandArea(`Finished ${getWorkflowName(workflow)}. Ready for the next command.`);
+      return true;
+    }
+
+    setExecutionState((previous) => ({
+      ...previous,
+      phase: 'failed',
+      message: response?.error || 'Workflow failed.'
+    }));
+    transcriptIgnoreUntilRef.current = Date.now() + STT_CLEAR_GUARD_MS;
+    await refreshCommandArea(
+      `There was a problem running ${getWorkflowName(workflow)}. Try again when ready.`
+    );
+    return false;
+  };
+
+  const runTriggeredWorkflow = async (messageText, source) => {
+    if (shouldIgnoreTranscript()) {
+      return false;
+    }
+
+    const matchedWorkflow = await resolveWorkflowMatch(messageText, source);
+    if (!matchedWorkflow) {
+      return false;
+    }
+
+    const normalizedMessage = normalizeTriggerText(messageText);
+    const now = Date.now();
+    const isVoiceSource = source.startsWith('voice');
+
+    if (
+      isVoiceSource &&
+      lastTriggerRef.current.workflowId === matchedWorkflow.id &&
+      now - lastTriggerRef.current.at < VOICE_TRIGGER_DEDUPE_MS
+    ) {
+      return true;
+    }
+
+    lastTriggerRef.current = { text: normalizedMessage, workflowId: matchedWorkflow.id, at: now };
+    await runWorkflow(matchedWorkflow, source);
+    return true;
+  };
+
+  useEffect(() => {
+    if (!finalTranscript || !sttEnabledRef.current) {
+      return;
+    }
+
+    if (isStartListeningCommand(finalTranscript) || isStopListeningCommand(finalTranscript)) {
+      return;
+    }
+
+    if (shouldIgnoreTranscript()) {
+      return;
+    }
+
+    void runTriggeredWorkflow(finalTranscript, 'voice');
+  }, [finalTranscript]);
 
   useEffect(() => {
     if (!electronBridge.isDesktop) {
-      return () => {};
+      return undefined;
     }
 
-    const clearHold = () => {
-      if (voiceTriggerHoldTimerRef.current) {
-        clearInterval(voiceTriggerHoldTimerRef.current);
-        voiceTriggerHoldTimerRef.current = null;
-      }
-      voiceTriggerKeyDownRef.current = false;
-      setIsHoldingVoiceTrigger(false);
-      if (!voiceTriggerArmedRef.current) {
-        setVoiceHoldProgress(0);
-      }
-    };
-
-    const shouldIgnoreTarget = (target) => {
-      if (!target) {
-        return false;
-      }
-
-      const element = target;
-      const tag = element.tagName?.toLowerCase();
-      return (
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        element.isContentEditable === true
-      );
-    };
-
-    const onKeyDown = (event) => {
-      if (event.key?.toLowerCase() !== 'r') {
+    const interval = setInterval(() => {
+      if (!sttEnabledRef.current) {
         return;
       }
 
-      if (event.repeat || voiceTriggerKeyDownRef.current || shouldIgnoreTarget(event.target)) {
+      if (shouldIgnoreTranscript()) {
         return;
       }
 
-      if (voiceTriggerArmedRef.current || voiceTriggerCoolingDownRef.current) {
+      const currentTranscript = transcriptRef.current;
+      if (!currentTranscript) {
         return;
       }
 
-      voiceTriggerKeyDownRef.current = true;
-      voiceTriggerHoldStartedAtRef.current = Date.now();
-      setIsHoldingVoiceTrigger(true);
-      setVoiceHoldProgress(0);
-      if (commandStatusTimerRef.current) {
-        clearTimeout(commandStatusTimerRef.current);
-        commandStatusTimerRef.current = null;
-      }
-      setCommandStatus('Hold R to 100% to arm voice command mode.');
-
-      voiceTriggerHoldTimerRef.current = setInterval(() => {
-        const elapsed = Date.now() - voiceTriggerHoldStartedAtRef.current;
-        const progress = Math.min((elapsed / VOICE_TRIGGER_HOLD_MS) * 100, 100);
-        setVoiceHoldProgress(progress);
-
-        if (elapsed < VOICE_TRIGGER_HOLD_MS) {
-          return;
-        }
-
-        if (voiceTriggerHoldTimerRef.current) {
-          clearInterval(voiceTriggerHoldTimerRef.current);
-          voiceTriggerHoldTimerRef.current = null;
-        }
-        if (!voiceTriggerArmedRef.current) {
-          voiceTriggerArmedRef.current = true;
-          setIsVoiceTriggerArmed(true);
-          setTranscript('Voice trigger armed. Speak your command now.');
-          setCommandStatus('Voice trigger armed. Waiting for final STT transcript.');
-          if (commandStatusTimerRef.current) {
-            clearTimeout(commandStatusTimerRef.current);
-          }
-          commandStatusTimerRef.current = setTimeout(() => {
-            if (voiceTriggerArmedRef.current) {
-              voiceTriggerArmedRef.current = false;
-              setIsVoiceTriggerArmed(false);
-              setVoiceHoldProgress(0);
-              startVoiceTriggerCooldown();
-              setCommandStatus('Voice trigger timed out. Hold R again to retry.');
-            }
-          }, 12000);
-        }
-      }, 100);
-    };
-
-    const onKeyUp = (event) => {
-      if (event.key?.toLowerCase() !== 'r') {
+      if (
+        isStartListeningCommand(currentTranscript) ||
+        isStopListeningCommand(currentTranscript)
+      ) {
         return;
       }
 
-      clearHold();
-    };
+      void runTriggeredWorkflow(currentTranscript, 'voice refresh');
+    }, TRANSCRIPT_REFRESH_MS);
 
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
-      clearHold();
-    };
+    return () => clearInterval(interval);
   }, []);
 
-  const memoryItems = useMemo(
-    () => [
-      { label: 'Mode', value: electronBridge.isDesktop ? 'Desktop live' : 'Browser demo' },
-      { label: 'STT', value: `${sttStatus}${sttConnection === 'Connected' ? '' : ' (Offline)'}` },
-      { label: 'Messages', value: String(chatMessages.length) },
-      { label: 'Commands', value: String(commandLibrary.length) }
-    ],
-    [chatMessages.length, commandLibrary.length, sttConnection, sttStatus]
-  );
-
-  const startStreaming = useCallback((fullText) => {
-    if (streamTimerRef.current) {
-      clearInterval(streamTimerRef.current);
-    }
-
-    const messageId = `assistant-${Date.now()}`;
-    setChatMessages((prev) => [...prev, { id: messageId, role: 'assistant', content: '' }]);
-
-    const chunks = String(fullText || '').split(' ');
-    let index = 0;
-    setIsStreaming(true);
-
-    streamTimerRef.current = setInterval(() => {
-      index += 1;
-      setChatMessages((prev) =>
-        prev.map((message) =>
-          message.id === messageId
-            ? { ...message, content: chunks.slice(0, index).join(' ') }
-            : message
-        )
-      );
-
-      if (index >= chunks.length) {
-        clearInterval(streamTimerRef.current);
-        streamTimerRef.current = null;
-        setIsStreaming(false);
-      }
-    }, 35);
-  }, []);
-
-  const stopStreaming = () => {
-    cancelledRequestRef.current = requestIdRef.current;
-    if (streamTimerRef.current) {
-      clearInterval(streamTimerRef.current);
-      streamTimerRef.current = null;
-    }
-    setIsStreaming(false);
-  };
-
-  const startNewConversation = () => {
-    setConversationHistory((prev) => [...prev, chatMessages]);
-    setChatMessages([
-      {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: assistantGreeting
-      }
-    ]);
-  };
-
-  const goBackConversation = () => {
-    if (conversationHistory.length === 0) {
+  const handleSubmitCommand = async () => {
+    if (!electronBridge.isDesktop) {
+      setExecutionState({
+        phase: 'idle',
+        workflowId: '',
+        workflowName: '',
+        message: 'Execution works in the desktop app.',
+        steps: []
+      });
       return;
     }
-    const previous = conversationHistory[conversationHistory.length - 1];
-    setConversationHistory((prev) => prev.slice(0, -1));
-    setChatMessages(previous);
-  };
 
-  const sendMessageWithText = useCallback(async (messageText) => {
-    const trimmed = String(messageText || '').trim();
+    const trimmed = input.trim();
     if (!trimmed) {
       return;
     }
 
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-
-    const outgoingMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: trimmed
-    };
-    const nextMessages = [...chatMessages, outgoingMessage];
-
-    setChatMessages(nextMessages);
-    setInput('');
-
-    const response = await electronBridge.llmChat(
-      nextMessages.map((message) => ({ role: message.role, content: message.content })),
-      { temperature: 0.3 }
-    );
-
-    if (cancelledRequestRef.current === requestId) {
-      return;
+    const didRun = await runTriggeredWorkflow(trimmed, 'text');
+    if (!didRun) {
+      setExecutionState({
+        phase: 'idle',
+        workflowId: '',
+        workflowName: '',
+        message: `No workflow matched "${trimmed}". Try the exact workflow name or trigger.`,
+        steps: []
+      });
+      setInput('');
     }
-
-    if (!response?.ok) {
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `error-${Date.now()}`,
-          role: 'system',
-          content: response?.error || 'LLM request failed.'
-        }
-      ]);
-      return;
-    }
-
-    startStreaming(response.data?.content || 'No response returned.');
-  }, [chatMessages, startStreaming]);
-
-  useEffect(() => {
-    sendMessageWithTextRef.current = sendMessageWithText;
-  }, [sendMessageWithText]);
-
-  const voiceTriggerMessage = isVoiceTriggerArmed
-    ? 'Voice trigger is active and waiting for your next spoken command.'
-    : isVoiceTriggerCoolingDown
-      ? 'Voice trigger cooling down...'
-      : isHoldingVoiceTrigger
-        ? `Hold R progress: ${Math.round(voiceHoldProgress)}%`
-        : 'Hold R for 5 seconds, then say commands like "open youtube" or "start coding".';
-
-  const sendMessage = async () => {
-    const messageText = input.trim();
-    if (!messageText) {
-      return;
-    }
-    await sendMessageWithText(messageText);
   };
 
-  const openEditor = (command) => {
+  const openCreateWorkflow = () => {
     if (!electronBridge.supportsCommandEditing) {
-      setCommandStatus('Command editing is available in the desktop app.');
+      setStatusMessage('Workflow editing is available in the desktop app.');
       return;
     }
 
-    setEditorCommand(command ? { ...command } : { ...emptyCommand });
-    setValidationResult(null);
+    setCreateError('');
+    setIsCreateModalOpen(true);
+  };
+
+  const openEditWorkflow = (workflow) => {
+    if (!electronBridge.supportsCommandEditing) {
+      setStatusMessage('Workflow editing is available in the desktop app.');
+      return;
+    }
+
+    setEditorError('');
+    setEditingWorkflow(workflow);
     setIsEditorOpen(true);
   };
 
-  const updateStep = (index, value) => {
-    setEditorCommand((prev) => {
-      const steps = [...prev.steps];
-      steps[index] = value;
-      return { ...prev, steps };
+  const handleSaveWorkflow = async (payload) => {
+    const response = await electronBridge.saveCommand(payload);
+    if (!response?.ok) {
+      const message =
+        response?.error ||
+        response?.data?.issues?.map((issue) => issue.message).join(' ') ||
+        'Could not save the workflow.';
+      setEditorError(message);
+      return { ok: false };
+    }
+
+    setCommandLibrary((previous) => {
+      const next = previous.filter((item) => item.id !== response.data.id);
+      return [...next, response.data];
     });
+    setIsEditorOpen(false);
+    setEditingWorkflow(null);
+    setEditorError('');
+    setStatusMessage(`Saved ${getWorkflowName(response.data)}.`);
+    return { ok: true };
   };
 
-  const addStep = () => {
-    setEditorCommand((prev) => ({ ...prev, steps: [...prev.steps, ''] }));
-  };
+  const handleCreateWorkflow = async (prompt) => {
+    setCreateError('');
+    setStatusMessage('');
+    setIsCreatingWorkflow(true);
 
-  const removeStep = (index) => {
-    setEditorCommand((prev) => ({
-      ...prev,
-      steps: prev.steps.filter((_step, stepIndex) => stepIndex !== index)
-    }));
-  };
-
-  const validateCommand = async () => {
-    const response = await electronBridge.validateCommand(editorCommand);
-    setValidationResult(response);
-  };
-
-  const saveCommand = async () => {
-    const response = await electronBridge.saveCommand(editorCommand);
-    if (response?.ok) {
-      setCommandLibrary((prev) => {
-        const next = prev.filter((item) => item.id !== editorCommand.id);
-        return [...next, editorCommand];
-      });
-      setIsEditorOpen(false);
-      setCommandStatus(`Saved ${editorCommand.id}.`);
-    } else {
-      setValidationResult(response);
+    const synthesisResponse = await electronBridge.synthesizeCommand(prompt);
+    if (!synthesisResponse?.ok) {
+      setCreateError(synthesisResponse?.error || 'Could not generate the workflow.');
+      setIsCreatingWorkflow(false);
+      return { ok: false };
     }
-  };
 
-  const runCommand = async (command, mode) => {
-    setCommandStatus(`${mode === 'dry' ? 'Dry-run' : 'Run'}: ${command.id}`);
-    const response =
-      mode === 'dry'
-        ? await electronBridge.dryRunCommand(command)
-        : await electronBridge.executeCommand(command);
-
-    if (response?.ok) {
-      setCommandStatus(`${mode === 'dry' ? 'Dry-run' : 'Run'} complete.`);
-    } else {
-      setCommandStatus(response?.error || 'Command failed.');
+    const saveResponse = await electronBridge.saveCommand(synthesisResponse.data);
+    if (!saveResponse?.ok) {
+      const message =
+        saveResponse?.error ||
+        saveResponse?.data?.issues?.map((issue) => issue.message).join(' ') ||
+        'Could not save the generated workflow.';
+      setCreateError(message);
+      setIsCreatingWorkflow(false);
+      return { ok: false };
     }
+
+    setCommandLibrary((previous) => {
+      const next = previous.filter((item) => item.id !== saveResponse.data.id);
+      return [...next, saveResponse.data];
+    });
+    setIsCreateModalOpen(false);
+    setStatusMessage(`Created ${getWorkflowName(saveResponse.data)} with Gemini.`);
+    setIsCreatingWorkflow(false);
+    return { ok: true };
   };
 
   return (
-    <div className="desktop-shell">
-      <header className="desktop-header">
-        <div>
-          <p className="eyebrow">Desktop workspace</p>
-          <h1>OPEN-NEW-JARVIS APP</h1>
-        </div>
-        <nav className="desktop-header-actions">
-          <Link className="button secondary" to="/">
-            Back to landing
-          </Link>
-          <a className="button primary" href={electronBridge.releaseUrl} target="_blank" rel="noreferrer">
-            Releases
-          </a>
-        </nav>
-      </header>
+    <div className="workflow-app-shell">
+      <div className="workflow-app">
+        <VoiceBar
+          appName="Nyctw Jarvis"
+          transcript={transcript || sttMessage}
+          sttStatus={sttStatus}
+          sttConnection={sttConnection}
+          isListening={sttEnabled}
+          canListen={electronBridge.isDesktop}
+          onToggleListening={toggleListening}
+        />
 
-      <main className="desktop-layout">
-        <aside className="desktop-sidebar">
-          <section className="desktop-panel">
-            <span className="eyebrow">Workspace memory</span>
-            <h2>SESSION OVERVIEW</h2>
-            <div className="memory-list">
-              {memoryItems.map((item) => (
-                <div key={item.label} className="memory-card">
-                  <strong>{item.value}</strong>
-                  <span>{item.label}</span>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="desktop-panel">
-            <span className="eyebrow">Live transcript</span>
-            <p className="desktop-copy">
-              {transcript || (electronBridge.isDesktop ? 'Waiting for transcript...' : demoTranscript)}
-            </p>
-            {finalTranscript && <p className="desktop-copy">Final: {finalTranscript}</p>}
-            <p className="desktop-copy">STT: {sttStatus}</p>
-            <p className="desktop-copy">Connection: {sttConnection}</p>
-            {electronBridge.isDesktop && (
-              <>
-                <p className="desktop-copy">
-                  {voiceTriggerMessage}
-                </p>
-                <div className="voice-hold-progress" aria-hidden="true">
-                  <div
-                    className={`voice-hold-progress-bar${isVoiceTriggerArmed ? ' active' : ''}`}
-                    style={{ width: `${isVoiceTriggerArmed ? 100 : voiceHoldProgress}%` }}
-                  />
-                </div>
-              </>
-            )}
-            {electronBridge.isDesktop && (
-              <div className="stt-actions">
-                <button
-                  className="button secondary"
-                  onClick={() => setSttEnabled((prev) => !prev)}
-                >
-                  {sttEnabled ? 'Stop listening' : 'Start listening'}
-                </button>
-              </div>
-            )}
-          </section>
-        </aside>
-
-        <section className="desktop-panel desktop-chat-panel">
-          <div className="panel-header">
-            <div>
-              <h2>CHAT</h2>
-              <p>Talk to the assistant, review its answer, and keep the transcript visible.</p>
-            </div>
-            <div className="chat-actions">
-              <button className="button secondary" onClick={goBackConversation} disabled={!conversationHistory.length}>
-                Back
-              </button>
-              <button className="button secondary" onClick={startNewConversation}>
-                New
-              </button>
-              <button className="button primary" onClick={stopStreaming} disabled={!isStreaming}>
-                Stop
-              </button>
-            </div>
-          </div>
-
-          <div className="messages">
-            {chatMessages.map((message) => (
-              <div key={message.id} className={`message ${message.role}`}>
-                <span className="role">{message.role}</span>
-                <p>{message.content}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="chat-input">
-            <input
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  sendMessage();
-                }
-              }}
-              placeholder="Ask Jarvis about commands, memory, or tasks..."
-            />
-            <button className="button primary" onClick={sendMessage}>
-              Send
-            </button>
-            <button
-              className="button secondary"
-              onClick={() => sendMessageWithText(finalTranscript || transcript)}
-              disabled={!finalTranscript && !transcript}
-            >
-              Voice → Gemini
-            </button>
-          </div>
-        </section>
-
-        <section className="desktop-panel desktop-command-panel">
-          <div className="panel-header">
-            <div>
-              <h2>COMMAND LIBRARY</h2>
-              <p>Create, validate, dry-run, and execute reusable command recipes.</p>
-            </div>
-            <button
-              className="button secondary"
-              onClick={() => openEditor()}
-              disabled={!electronBridge.supportsCommandEditing}
-            >
-              New command
-            </button>
-          </div>
-
-          {!electronBridge.supportsCommandEditing && (
-            <div className="inline-banner">
-              Editing and execution are only live when Electron is connected to the preload bridge.
-            </div>
-          )}
-
-          <div className="command-status">{commandStatus}</div>
-          <div className="command-list">
-            {commandLibrary.map((command) => (
-              <div key={command.id} className="command-card">
-                <div className="command-meta">
-                  <div className="command-topline">
-                    <strong>{command.id}</strong>
-                    <span>{command.confirm ? 'Confirmation required' : 'Ready to run'}</span>
-                  </div>
-                  <p className="command-summary">
-                    {command.summary ||
-                      'Review the trigger, steps, and safety controls before execution.'}
+        <main className="workflow-main">
+          <div className="workflow-workspace">
+            <section className="workflow-section workflow-section--list">
+              <div className="workflow-section__header">
+                <div>
+                  <p className="workflow-kicker">Workflows</p>
+                  <h2>Your workflows</h2>
+                  <p className="workflow-section__copy">
+                    Start from your saved commands first, then watch execution in the side terminal.
                   </p>
-                  <span className="command-trigger">Trigger: {command.trigger}</span>
-                  <ul className="step-list">
-                    {command.steps.map((step) => (
-                      <li key={`${command.id}-${step}`}>{step}</li>
-                    ))}
-                  </ul>
                 </div>
-
-                <div className="command-actions">
-                  <button
-                    className="button secondary"
-                    onClick={() => openEditor(command)}
-                    disabled={!electronBridge.supportsCommandEditing}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    className="button secondary"
-                    onClick={() => runCommand(command, 'dry')}
-                    disabled={!electronBridge.isDesktop}
-                  >
-                    Dry-run
-                  </button>
-                  <button
-                    className="button primary"
-                    onClick={() => runCommand(command, 'run')}
-                    disabled={!electronBridge.isDesktop}
-                  >
-                    Run
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </main>
-
-      {isEditorOpen && (
-        <div className="modal-backdrop">
-          <div className="modal">
-            <h2>COMMAND EDITOR</h2>
-            <label>
-              Id
-              <input
-                value={editorCommand.id}
-                onChange={(event) =>
-                  setEditorCommand((prev) => ({ ...prev, id: event.target.value }))
-                }
-              />
-            </label>
-            <label>
-              Trigger
-              <input
-                value={editorCommand.trigger}
-                onChange={(event) =>
-                  setEditorCommand((prev) => ({ ...prev, trigger: event.target.value }))
-                }
-              />
-            </label>
-            <div className="steps">
-              <div className="steps-header">
-                <span>Steps</span>
-                <button className="button secondary" onClick={addStep}>
-                  Add step
+                <button
+                  className="workflow-button workflow-button--primary"
+                  onClick={openCreateWorkflow}
+                  disabled={!electronBridge.supportsCommandEditing}
+                >
+                  Create Workflow
                 </button>
               </div>
-              {editorCommand.steps.map((step, index) => (
-                <div key={`step-${index}`} className="step-row">
-                  <input
-                    value={step}
-                    onChange={(event) => updateStep(index, event.target.value)}
-                  />
-                  <button className="button secondary" onClick={() => removeStep(index)}>
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-            <label className="toggle">
-              <input
-                type="checkbox"
-                checked={editorCommand.confirm}
-                onChange={(event) =>
-                  setEditorCommand((prev) => ({ ...prev, confirm: event.target.checked }))
-                }
+
+              <CommandBar
+                value={input}
+                onChange={setInput}
+                onSubmit={handleSubmitCommand}
+                canRun={electronBridge.isDesktop}
               />
-              Require confirmation before execution
-            </label>
-            <div className="validation">
-              <button className="button secondary" onClick={validateCommand}>
-                Validate
-              </button>
-              {validationResult && (
-                <span>
-                  {validationResult.ok
-                    ? 'Validation passed.'
-                    : validationResult.error || 'Validation failed.'}
-                </span>
+
+              {statusMessage && <p className="workflow-note">{statusMessage}</p>}
+
+              {!electronBridge.supportsCommandEditing && (
+                <p className="workflow-note">
+                  Editing and execution stay available when the Electron app is connected.
+                </p>
               )}
-            </div>
-            <div className="modal-actions">
-              <button className="button secondary" onClick={() => setIsEditorOpen(false)}>
-                Cancel
-              </button>
-              <button className="button primary" onClick={saveCommand}>
-                Save
-              </button>
-            </div>
+
+              <WorkflowList
+                workflows={commandLibrary}
+                onRun={(workflow) => runWorkflow(workflow)}
+                onEdit={openEditWorkflow}
+                canRun={electronBridge.isDesktop}
+                canEdit={electronBridge.supportsCommandEditing}
+              />
+            </section>
+
+            <aside className="workflow-terminal-rail">
+              <ExecutionStatus executionState={executionState} />
+            </aside>
           </div>
-        </div>
-      )}
+        </main>
+      </div>
+
+      <WorkflowEditorModal
+        isOpen={isEditorOpen}
+        workflow={editingWorkflow}
+        existingWorkflows={commandLibrary}
+        errorMessage={editorError}
+        onClose={() => {
+          setIsEditorOpen(false);
+          setEditingWorkflow(null);
+          setEditorError('');
+        }}
+        onSave={handleSaveWorkflow}
+      />
+      <WorkflowPromptModal
+        isOpen={isCreateModalOpen}
+        isBusy={isCreatingWorkflow}
+        errorMessage={createError}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setCreateError('');
+        }}
+        onCreate={handleCreateWorkflow}
+      />
     </div>
   );
 };

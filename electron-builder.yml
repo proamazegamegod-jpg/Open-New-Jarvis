@@ -1,0 +1,18 @@
+appId: com.opennewjarvis.desktop
+productName: Open-New-Jarvis
+directories:
+  output: release
+files:
+  - package.json
+  - dist/**
+  - src/main/**
+  - src/preload/**
+  - src/services/**
+win:
+  signAndEditExecutable: false
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

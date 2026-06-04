@@ -54,6 +54,9 @@ const createSttClient = ({ url, onPartial, onFinal, onStatus }) => {
 
     socket.on('error', (error) => {
       console.error('[stt] websocket error', error);
+      if (active && onStatus) {
+        onStatus({ type: 'status', state: 'disconnected', error: error.message });
+      }
     });
   };
 
@@ -64,6 +67,15 @@ const createSttClient = ({ url, onPartial, onFinal, onStatus }) => {
       active = false;
       if (socket && socket.readyState === WebSocket.OPEN) {
         socket.close();
+        return;
+      }
+      if (socket && socket.readyState === WebSocket.CONNECTING) {
+        try {
+          socket.once('error', () => {});
+          socket.terminate();
+        } catch (_error) {
+          // Ignore shutdown races while a connection is still opening.
+        }
       }
     }
   };

@@ -4,45 +4,56 @@ const repositoryUrl = 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis';
 export const demoTranscript =
   'Wake word detected. Reviewing the request, validating the command recipe, and preparing a safe dry-run.';
 
-export const assistantGreeting =
-  'Open-New-Jarvis turns speech into a reviewable command recipe, shows the live transcript, and keeps execution gated until you approve it.';
-
-export const demoMessages = [
-  {
-    id: 'assistant-demo-1',
-    role: 'assistant',
-    content: assistantGreeting
-  }
-];
-
 export const demoCommands = [
   {
-    id: 'triage-standup',
-    trigger: 'summarize updates',
-    steps: ['collect latest notes', 'group by priority', 'draft concise standup summary'],
-    preconditions: ['Confirm the latest updates are available', 'Select the standup audience'],
-    rollback: ['Discard the generated summary draft', 'Re-run with a narrower date range if needed'],
-    summary: 'Summarize updates, group by priority, and draft a concise standup.',
-    confirm: false
-  },
-  {
-    id: 'prepare-release-note',
-    trigger: 'draft release notes',
-    steps: ['scan recent changes', 'extract user-facing updates', 'assemble release-ready markdown'],
-    preconditions: ['Point to the correct release range', 'Review user-facing changes before publishing'],
-    rollback: ['Clear the generated markdown', 'Restore the previous release-note draft'],
-    summary:
-      'Scan recent changes, extract user-facing updates, and assemble release-ready markdown.',
-    confirm: true
+    id: 'start-coding',
+    name: 'Coding Setup',
+    trigger: 'start coding',
+    summary: 'Open VS Code, a terminal, and coding tabs.',
+    confirm: false,
+    actions: [
+      {
+        type: 'open_app',
+        executablePath: '%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe'
+      },
+      {
+        type: 'wait',
+        ms: 1500
+      },
+      {
+        type: 'run_command',
+        command: 'Set-Location $HOME'
+      },
+      {
+        type: 'open_url',
+        url: 'https://github.com/'
+      },
+      {
+        type: 'open_url',
+        url: 'https://stackoverflow.com/'
+      }
+    ],
+    steps: [
+      'Open app: %LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe',
+      'Wait 1500ms',
+      'Run command: Set-Location $HOME',
+      'Open URL: https://github.com/',
+      'Open URL: https://stackoverflow.com/'
+    ]
   },
   {
     id: 'open-docs',
+    name: 'Open Docs',
     trigger: 'open docs',
-    steps: ['open browser', 'navigate to docs'],
-    preconditions: ['Choose the target documentation set', 'Confirm the destination page'],
-    rollback: ['Close the opened tab', 'Return to the previous browsing context'],
     summary: 'Open documentation in your browser and navigate to the right page.',
-    confirm: true
+    confirm: false,
+    actions: [
+      {
+        type: 'open_url',
+        url: 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis'
+      }
+    ],
+    steps: ['Open URL: https://github.com/proamazegamegod-jpg/Open-New-Jarvis']
   }
 ];
 
@@ -87,7 +98,6 @@ const browserReply = (messageText) => {
 
 const isElectronAvailable =
   typeof window !== 'undefined' && typeof window.electron === 'object' && window.electron !== null;
-const DESKTOP_TOOL_UNAVAILABLE_MESSAGE = 'Unavailable in browser preview.';
 
 const fallbackBridge = {
   isDesktop: false,
@@ -109,6 +119,23 @@ const fallbackBridge = {
     return {
       ok: false,
       error: 'Command validation is available in the desktop app.'
+    };
+  },
+  async synthesizeCommand() {
+    return {
+      ok: false,
+      error: 'AI workflow creation is available in the desktop app.'
+    };
+  },
+  async matchWorkflowIntent() {
+    return {
+      ok: true,
+      data: {
+        workflow: null,
+        workflowId: null,
+        confidence: 0,
+        reason: 'Voice intent matching is available in the desktop app.'
+      }
     };
   },
   async dryRunCommand() {
@@ -135,6 +162,30 @@ const fallbackBridge = {
       error: 'Saving commands is available in the desktop app.'
     };
   },
+  async deleteCommand() {
+    return {
+      ok: false,
+      error: 'Deleting commands is available in the desktop app.'
+    };
+  },
+  async duplicateCommand() {
+    return {
+      ok: false,
+      error: 'Duplicating commands is available in the desktop app.'
+    };
+  },
+  async importCommands() {
+    return {
+      ok: false,
+      error: 'Importing commands is available in the desktop app.'
+    };
+  },
+  async exportCommand() {
+    return {
+      ok: false,
+      error: 'Exporting commands is available in the desktop app.'
+    };
+  },
   async openExternalUrl(url) {
     const safeUrl = toSafeBrowserUrl(url);
     if (!safeUrl) {
@@ -148,55 +199,42 @@ const fallbackBridge = {
       window.open(safeUrl, '_blank', 'noopener,noreferrer');
       return { ok: true };
     }
+
     return {
       ok: false,
       error: 'Opening URLs is unavailable.'
     };
   },
-  async launchWorkspaceTool() {
+  async getSttState() {
     return {
-      ok: false,
-      error: 'Desktop tool launching is available in the desktop app.'
+      ok: true,
+      data: {
+        enabled: false,
+        status: 'Preview',
+        connection: 'Preview'
+      }
     };
   },
-  async runCodingWorkspaceRoutine() {
-    const opened = [];
-    const failed = [
-      { label: 'VS Code', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE },
-      { label: 'Terminal', error: DESKTOP_TOOL_UNAVAILABLE_MESSAGE }
-    ];
-
-    const resources = [
-      { label: 'VS Code Web', url: 'https://github.dev' },
-      { label: 'GitHub', url: 'https://github.com' },
-      { label: 'Stack Overflow', url: 'https://stackoverflow.com' },
-      { label: 'Claude', url: 'https://claude.ai' }
-    ];
-
-    for (const resource of resources) {
-      const response = await fallbackBridge.openExternalUrl(resource.url);
-      if (response?.ok) {
-        opened.push(resource.label);
-      } else {
-        failed.push({
-          label: resource.label,
-          error: response?.error || 'Failed to open URL.'
-        });
-      }
-    }
-
+  async setSttEnabled() {
     return {
-      ok: failed.length === 0,
-      data: {
-        opened,
-        failed,
-        summary:
-          opened.length > 0
-            ? `Opened: ${opened.join(', ')}`
-            : 'No workspace resources were opened.'
-      },
-      error: failed.length > 0 ? failed.map((item) => `${item.label}: ${item.error}`).join(' | ') : undefined
+      ok: false,
+      error: 'Voice control is available in the desktop app.'
     };
+  },
+  async clearSttContext() {
+    return {
+      ok: true,
+      data: {
+        enabled: false,
+        status: 'Preview',
+        connection: 'Preview',
+        transcript: '',
+        message: ''
+      }
+    };
+  },
+  onWorkflowProgress() {
+    return () => {};
   },
   onSttPartial() {
     return () => {};
@@ -205,6 +243,9 @@ const fallbackBridge = {
     return () => {};
   },
   onSttStatus() {
+    return () => {};
+  },
+  onSttState() {
     return () => {};
   }
 };

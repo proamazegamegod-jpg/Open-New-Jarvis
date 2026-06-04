@@ -82,7 +82,7 @@ async def handle_client(ws):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Live STT server (faster-whisper + VAD).")
-    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--model", default="tiny.en")
     parser.add_argument("--device", default="cuda")
@@ -179,11 +179,39 @@ async def mock_loop():
         await asyncio.sleep(1.5)
 
 
+async def existing_server_is_healthy(host, port):
+    if websockets is None:
+        return False
+
+    uri = f"ws://{host}:{port}"
+
+    try:
+        connection = await asyncio.wait_for(websockets.connect(uri), timeout=1.0)
+    except Exception:
+        return False
+
+    try:
+        await connection.close()
+    except Exception:
+        pass
+
+    return True
+
+
 async def main_async(args):
     if websockets is None:
         raise RuntimeError("websockets is required. Run: pip install websockets")
 
-    async with websockets.serve(handle_client, args.host, args.port):
+    try:
+        server = await websockets.serve(handle_client, args.host, args.port)
+    except OSError as exc:
+        bind_in_use = exc.errno == 10048 or getattr(exc, "winerror", None) == 10048
+        if bind_in_use and await existing_server_is_healthy(args.host, args.port):
+            print(f"[stt] using existing server on ws://{args.host}:{args.port}")
+            return
+        raise
+
+    async with server:
         print(f"[stt] listening on ws://{args.host}:{args.port}")
 
         if args.mock:

@@ -79,30 +79,35 @@ const Landing = () => {
   };
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <button className="menu-toggle" onClick={scrollToPreview}>
-          <span className="menu-icon" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-          <span>Menu</span>
-        </button>
+    <div className="app-shell landing-shell">
+      <div className="browser-frame" aria-hidden="true">
+        <div className="browser-frame__controls">
+          <span>&lsaquo;</span>
+          <span>&rsaquo;</span>
+          <span>&#8635;</span>
+          <span className="browser-frame__globe">&#9711;</span>
+        </div>
+        <div className="browser-frame__address">localhost:5173</div>
+        <div className="browser-frame__status">
+          <span className="browser-frame__signal" />
+          <span className="browser-frame__signal browser-frame__signal--muted" />
+        </div>
+      </div>
 
-        <div className="brand-lockup brand-lockup-center">
+      <header className="landing-header">
+        <div className="brand-lockup landing-brand-lockup">
           <div className="brand-mark">OJ</div>
-          <div>
-            <p className="eyebrow">Open-New-Jarvis</p>
-            <h1>Voice-powered workflows, polished for desktop.</h1>
+          <div className="landing-brand-copy">
+            <div className="landing-brand-name">OPEN-NEW-JARVIS</div>
+            <p>VOICE-POWERED WORKFLOWS, POLISHED FOR DESKTOP.</p>
           </div>
         </div>
 
-        <nav className="utility-actions">
+        <nav className="utility-actions landing-nav">
           <button className="utility-link" onClick={scrollToPreview}>
             Preview
           </button>
-          <a className="utility-link" href="#download">
+          <a className="utility-link" href={electronBridge.releaseUrl} target="_blank" rel="noreferrer">
             Download
           </a>
           <a className="utility-link" href={electronBridge.repositoryUrl} target="_blank" rel="noreferrer">
@@ -111,76 +116,61 @@ const Landing = () => {
         </nav>
       </header>
 
-      <main className="page">
-        <section className="hero">
-          <div className="hero-copy">
-            <span className="pill">Marketing website</span>
-            <h2>VOICE-POWERED WORKFLOWS, POLISHED FOR DESKTOP.</h2>
-            <p className="hero-text">
+      <main className="page landing-page">
+        <section className="hero hero-centered">
+          <div className="hero-copy hero-copy-centered">
+            <h1 className="landing-hero-title">POWERED WORKFLOWS, POLISHED FOR DESKTOP.</h1>
+            <p className="hero-text landing-hero-text">
               Download the desktop app to turn speech into safe, reviewable actions - or use this
               landing page as the polished website you deploy to Vercel.
             </p>
 
-            <div className="hero-actions">
-              <Link className="button primary hero-cta" to="/app">
+            <div className="hero-actions hero-actions-primary">
+              <Link className="button primary hero-cta hero-cta-wide" to="/app">
                 ENTER THE APP
               </Link>
               <a
-                className="button secondary"
+                className="button secondary hero-cta-wide"
                 href={electronBridge.releaseUrl}
                 target="_blank"
                 rel="noreferrer"
               >
-                Download for desktop
+                DOWNLOAD FOR DESKTOP
               </a>
-              <button className="button secondary" onClick={scrollToPreview}>
-                See product preview
-              </button>
             </div>
 
-            <p className="mode-description">
-              Separate routes now keep the website focused on marketing while Electron opens the
-              actual workspace at <strong>/app</strong>.
-            </p>
-            <div className="hero-progress" aria-hidden="true" />
-
-            <div className="stats-grid">
-              <div className="stat-card">
-                <strong>2</strong>
-                <span>Separate experiences</span>
-              </div>
-              <div className="stat-card">
-                <strong>/</strong>
-                <span>Landing route</span>
-              </div>
-              <div className="stat-card">
-                <strong>/app</strong>
-                <span>Desktop route</span>
-              </div>
+            <div className="hero-actions hero-actions-secondary">
+              <button className="button secondary hero-cta-wide hero-cta-preview" onClick={scrollToPreview}>
+                SEE PRODUCT PREVIEW
+              </button>
             </div>
           </div>
 
-          <aside className="hero-panel">
-            <div className="hero-panel-header">
-              <span>A real product, not a prototype</span>
-              <span>Website and app now separated</span>
-            </div>
-            <p className="hero-note">
-              The landing page remains the browser-facing marketing surface. The actual desktop
-              app UI lives on its own route and no longer shares the same screen as the website.
-            </p>
-            <ul className="hero-checklist">
-              <li>Vercel serves the marketing route at /</li>
-              <li>Electron opens the actual desktop workspace</li>
-              <li>Routing stays minimal and scalable with react-router-dom</li>
-            </ul>
-          </aside>
+          <div className="landing-hero-strip">
+            <article className="surface-card landing-callout">
+              <h3>A REAL PRODUCT, NOT A PROTOTYPE</h3>
+              <p>
+                Open-New-Jarvis pairs a polished marketing surface with a real desktop experience
+                built for voice-first workflows and safe execution.
+              </p>
+            </article>
+            <article className="surface-card landing-callout">
+              <h3>WEBSITE AND APP NOW SEPARATED</h3>
+              <p>
+                Browser visitors stay on the landing page, while Electron opens directly into the
+                actual app at <strong>/app</strong>.
+              </p>
+            </article>
+          </div>
         </section>
 
         <section className="section-block">
           <div className="section-heading">
-            <span className="eyebrow">What you get</span>
-            <h3>SEPARATE THE SITE FROM THE PRODUCT.</h3>
+            <h2>What you get</h2>
+            <p>
+              The landing page keeps discovery and conversion clean, while the desktop app carries
+              the actual workflow engine.
+            </p>
           </div>
 
           <div className="feature-grid">
@@ -196,8 +186,8 @@ const Landing = () => {
 
         <section className="section-block">
           <div className="section-heading">
-            <span className="eyebrow">Key features</span>
-            <h3>ONE CODEBASE, TWO CLEAR EXPERIENCES.</h3>
+            <h2>Key features</h2>
+            <p>The app remains safe and reviewable, and the website stays focused on the pitch.</p>
           </div>
 
           <div className="feature-grid">
@@ -213,8 +203,8 @@ const Landing = () => {
 
         <section ref={previewRef} className="section-block">
           <div className="section-heading">
-            <span className="eyebrow">Preview</span>
-            <h3>MARKETING WEBSITE VS DESKTOP WORKSPACE.</h3>
+            <h2>Product preview</h2>
+            <p>See the split between the browser-facing landing experience and the actual desktop workspace.</p>
           </div>
 
           <div className="preview-grid">
@@ -230,11 +220,10 @@ const Landing = () => {
         <section id="download" className="section-block">
           <article className="surface-card cta-banner">
             <div>
-              <span className="eyebrow">Download CTA</span>
-              <h3>READY TO TRY IT?</h3>
+              <h2>Ready to try it?</h2>
               <p>
-                Download Open-New-Jarvis for desktop to unlock the real workspace. Keep the
-                landing page for conversion, branding, and preview content.
+                Download Open-New-Jarvis for desktop to unlock the real workspace. Prefer to
+                explore first? Open the product preview in your browser.
               </p>
             </div>
             <div className="hero-actions">
@@ -247,7 +236,7 @@ const Landing = () => {
                 target="_blank"
                 rel="noreferrer"
               >
-                Download for desktop
+                DOWNLOAD FOR DESKTOP
               </a>
             </div>
           </article>
@@ -255,8 +244,9 @@ const Landing = () => {
       </main>
 
       <footer className="site-footer">
-        Website route: <strong>/</strong>. Desktop workspace route: <strong>/app</strong>. Vercel
-        can host the landing page while Electron boots directly into the real product UI.
+        Built for quick demos and real workflows. The web preview is Vercel-ready and the Electron
+        app is optimized for power users who want voice-first automation with reviewable,
+        repeatable command recipes.
       </footer>
     </div>
   );
