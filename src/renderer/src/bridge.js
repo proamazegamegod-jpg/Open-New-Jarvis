@@ -1,4 +1,6 @@
-const releaseUrl = 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis/releases';
+const releaseUrl =
+  'https://github.com/proamazegamegod-jpg/Open-New-Jarvis/releases/download/V1/Open-New-Jarvis%20Setup%201.0.0.exe';
+const releasePageUrl = 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis/releases/tag/V1';
 const repositoryUrl = 'https://github.com/proamazegamegod-jpg/Open-New-Jarvis';
 
 export const demoTranscript =
@@ -103,7 +105,22 @@ const fallbackBridge = {
   isDesktop: false,
   supportsCommandEditing: false,
   releaseUrl,
+  releasePageUrl,
   repositoryUrl,
+  async getAppSettings() {
+    return {
+      ok: true,
+      data: {
+        geminiApiKey: ''
+      }
+    };
+  },
+  async setGeminiApiKey() {
+    return {
+      ok: false,
+      error: 'Gemini key settings are available in the desktop app.'
+    };
+  },
   async llmChat(messages) {
     const latestMessage = messages[messages.length - 1];
     await wait(300);
@@ -256,6 +273,7 @@ const electronBridge = isElectronAvailable
       isDesktop: true,
       supportsCommandEditing: true,
       releaseUrl,
+      releasePageUrl,
       repositoryUrl
     }
   : fallbackBridge;

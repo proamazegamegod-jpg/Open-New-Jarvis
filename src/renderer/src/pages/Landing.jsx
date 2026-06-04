@@ -239,6 +239,9 @@ const Landing = () => {
                 DOWNLOAD FOR DESKTOP
               </a>
             </div>
+            <p className="landing-download-note">
+              Direct download link: <a href={electronBridge.releaseUrl}>{electronBridge.releaseUrl}</a>
+            </p>
           </article>
         </section>
       </main>

@@ -111,6 +111,13 @@ const DesktopApp = () => {
   const [createError, setCreateError] = useState('');
   const [editorError, setEditorError] = useState('');
   const [isCreatingWorkflow, setIsCreatingWorkflow] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState('');
+  const [geminiKeyStatus, setGeminiKeyStatus] = useState(
+    electronBridge.isDesktop
+      ? 'Using your saved Gemini key when present, otherwise GEMINI_API_KEY from .env.'
+      : 'Gemini key settings are available in the desktop app.'
+  );
+  const [isSavingGeminiKey, setIsSavingGeminiKey] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [sttEnabled, setSttEnabled] = useState(true);
   const [sttStatus, setSttStatus] = useState(electronBridge.isDesktop ? 'Waiting' : 'Preview');
@@ -198,6 +205,20 @@ const DesktopApp = () => {
           return;
         }
         syncSttState(response.data);
+      });
+
+      electronBridge.getAppSettings().then((response) => {
+        if (!response?.ok || !isMounted) {
+          return;
+        }
+
+        const nextKey = String(response.data?.geminiApiKey || '');
+        setGeminiApiKey(nextKey);
+        setGeminiKeyStatus(
+          nextKey
+            ? 'Using your saved Gemini API key.'
+            : 'Using GEMINI_API_KEY from .env when available.'
+        );
       });
 
       const unsubscribePartial = electronBridge.onSttPartial((payload) => {
@@ -613,6 +634,29 @@ const DesktopApp = () => {
     return { ok: true };
   };
 
+  const handleSaveGeminiKey = async () => {
+    if (!electronBridge.isDesktop) {
+      return;
+    }
+
+    setIsSavingGeminiKey(true);
+    const response = await electronBridge.setGeminiApiKey(geminiApiKey);
+    if (!response?.ok) {
+      setGeminiKeyStatus(response?.error || 'Could not save the Gemini API key.');
+      setIsSavingGeminiKey(false);
+      return;
+    }
+
+    const savedKey = String(response.data?.geminiApiKey || '');
+    setGeminiApiKey(savedKey);
+    setGeminiKeyStatus(
+      savedKey
+        ? 'Saved. The app will now use your Gemini API key.'
+        : 'Saved. The app will now fall back to GEMINI_API_KEY from .env.'
+    );
+    setIsSavingGeminiKey(false);
+  };
+
   return (
     <div className="workflow-app-shell">
       <div className="workflow-app">
@@ -672,6 +716,39 @@ const DesktopApp = () => {
 
             <aside className="workflow-terminal-rail">
               <ExecutionStatus executionState={executionState} />
+              <section className="workflow-section workflow-settings-card">
+                <div className="workflow-settings-card__header">
+                  <div>
+                    <p className="workflow-kicker">Gemini</p>
+                    <h2>Your API key</h2>
+                  </div>
+                </div>
+
+                <div className="workflow-form workflow-settings-form">
+                  <label>
+                    Gemini API key
+                    <input
+                      type="password"
+                      value={geminiApiKey}
+                      onChange={(event) => setGeminiApiKey(event.target.value)}
+                      placeholder="Paste your Gemini API key"
+                      disabled={!electronBridge.isDesktop || isSavingGeminiKey}
+                    />
+                  </label>
+                </div>
+
+                <div className="workflow-settings-actions">
+                  <button
+                    className="workflow-button workflow-button--secondary"
+                    onClick={handleSaveGeminiKey}
+                    disabled={!electronBridge.isDesktop || isSavingGeminiKey}
+                  >
+                    {isSavingGeminiKey ? 'Saving...' : 'Save key'}
+                  </button>
+                </div>
+
+                <p className="workflow-note">{geminiKeyStatus}</p>
+              </section>
             </aside>
           </div>
         </main>

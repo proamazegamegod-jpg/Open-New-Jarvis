@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
   llmChat: (messages, options) => ipcRenderer.invoke('llmChat', messages, options),
+  getAppSettings: () => ipcRenderer.invoke('getAppSettings'),
+  setGeminiApiKey: (value) => ipcRenderer.invoke('setGeminiApiKey', value),
   synthesizeCommand: (prompt) => ipcRenderer.invoke('synthesizeCommand', prompt),
   matchWorkflowIntent: (utterance) => ipcRenderer.invoke('matchWorkflowIntent', utterance),
   validateCommand: (command) => ipcRenderer.invoke('validateCommand', command),

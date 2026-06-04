@@ -1,5 +1,6 @@
 const https = require('https');
 const { URL } = require('url');
+const { getGeminiApiKey } = require('./appSettings');
 
 const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
@@ -117,9 +118,9 @@ const stripCodeFences = (value) =>
 const parseJsonText = (value) => JSON.parse(stripCodeFences(value));
 
 const requestGemini = async ({ model = DEFAULT_MODEL, systemPrompt, contents, generationConfig }) => {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = await getGeminiApiKey();
   if (!apiKey) {
-    return { ok: false, error: 'Missing GEMINI_API_KEY in .env.' };
+    return { ok: false, error: 'Missing Gemini API key. Add one in the app or set GEMINI_API_KEY in .env.' };
   }
 
   const endpoint = `${API_BASE}/models/${model}:generateContent?key=${apiKey}`;

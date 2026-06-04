@@ -230,9 +230,9 @@ a:hover {
 }
 
 .hero {
-  min-height: calc(100vh - 8rem);
-  gap: 2.5rem;
-  padding: 4.75rem 0 4rem;
+  min-height: min(40rem, calc(100vh - 6.5rem));
+  gap: 1.25rem;
+  padding: 2rem 0 2.5rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -266,8 +266,8 @@ a:hover {
 .landing-hero-title {
   margin: 0 auto;
   max-width: 10ch;
-  font-size: clamp(3.6rem, 8vw, 5.85rem);
-  line-height: 1.06;
+  font-size: clamp(2.8rem, 6.8vw, 4.85rem);
+  line-height: 1.02;
   letter-spacing: -0.03em;
   text-wrap: balance;
 }
@@ -295,7 +295,8 @@ a:hover {
 }
 
 .landing-hero-text {
-  margin: 1.6rem auto 0;
+  margin: 1rem auto 0;
+  max-width: 39rem;
 }
 
 .hero-actions,
@@ -316,11 +317,11 @@ a:hover {
 }
 
 .hero-actions-primary {
-  margin-top: 2rem;
+  margin-top: 1.2rem;
 }
 
 .hero-actions-secondary {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
 }
 
 .button {
@@ -421,7 +422,7 @@ a:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1px;
-  margin-top: 2.25rem;
+  margin-top: 1rem;
   background: rgba(255, 255, 255, 0.08);
 }
 
@@ -472,6 +473,17 @@ a:hover {
   margin: 0;
   color: #94a3b8;
   line-height: 1.7;
+}
+
+.landing-download-note {
+  margin: 1rem 0 0;
+  color: #94a3b8;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.landing-download-note a {
+  color: #dfe6f1;
 }
 
 .feature-grid {

@@ -1,6 +1,7 @@
 const path = require('path');
 const { app, ipcMain, dialog, shell } = require('electron');
 const geminiClient = require('../services/geminiClient');
+const appSettings = require('../services/appSettings');
 const commandService = require('../services/commandService');
 
 const toSafeExternalUrl = (value) => {
@@ -18,6 +19,34 @@ const toSafeExternalUrl = (value) => {
 const registerIpcHandlers = () => {
   ipcMain.handle('llmChat', async (_event, messages, options) => {
     return geminiClient.chat(messages, options);
+  });
+
+  ipcMain.handle('getAppSettings', async () => {
+    try {
+      return {
+        ok: true,
+        data: await appSettings.getAppSettings()
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || 'Could not load app settings.'
+      };
+    }
+  });
+
+  ipcMain.handle('setGeminiApiKey', async (_event, value) => {
+    try {
+      return {
+        ok: true,
+        data: await appSettings.setGeminiApiKey(value)
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || 'Could not save the Gemini API key.'
+      };
+    }
   });
 
   ipcMain.handle('synthesizeCommand', async (_event, prompt) => {

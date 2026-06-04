@@ -179,6 +179,29 @@
   font-size: 0.95rem;
 }
 
+.workflow-settings-card {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+
+.workflow-settings-card__header h2 {
+  margin: 0;
+  font-size: 1.18rem;
+  line-height: 1.15;
+  color: #ffffff;
+}
+
+.workflow-settings-form {
+  gap: 0.75rem;
+}
+
+.workflow-settings-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .workflow-terminal-rail {
   position: sticky;
   top: 1rem;
