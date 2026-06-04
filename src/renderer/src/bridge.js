@@ -152,6 +152,12 @@ const fallbackBridge = {
       error: 'Opening URLs is unavailable.'
     };
   },
+  async launchWorkspaceTool() {
+    return {
+      ok: false,
+      error: 'Desktop tool launching is available in the desktop app.'
+    };
+  },
   onSttPartial() {
     return () => {};
   },
