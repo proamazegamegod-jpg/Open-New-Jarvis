@@ -51,6 +51,18 @@ const wait = (ms) =>
     setTimeout(resolve, ms);
   });
 
+const toSafeBrowserUrl = (value) => {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.toString();
+  } catch (_error) {
+    return null;
+  }
+};
+
 const browserReply = (messageText) => {
   const normalized = String(messageText || '').trim().toLowerCase();
 
@@ -120,6 +132,24 @@ const fallbackBridge = {
     return {
       ok: false,
       error: 'Saving commands is available in the desktop app.'
+    };
+  },
+  async openExternalUrl(url) {
+    const safeUrl = toSafeBrowserUrl(url);
+    if (!safeUrl) {
+      return {
+        ok: false,
+        error: 'Blocked unsafe URL.'
+      };
+    }
+
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+      window.open(safeUrl, '_blank', 'noopener,noreferrer');
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      error: 'Opening URLs is unavailable.'
     };
   },
   onSttPartial() {

@@ -1,6 +1,18 @@
-const { ipcMain } = require('electron');
+const { ipcMain, shell } = require('electron');
 const geminiClient = require('../services/geminiClient');
 const commandService = require('../services/commandService');
+
+const toSafeExternalUrl = (value) => {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed.toString();
+  } catch (_error) {
+    return null;
+  }
+};
 
 const registerIpcHandlers = () => {
   ipcMain.handle('llmChat', async (_event, messages, options) => {
@@ -29,6 +41,28 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle('saveCommand', async (_event, command) => {
     return commandService.saveCommand(command);
+  });
+
+  ipcMain.handle('openExternalUrl', async (_event, url) => {
+    const safeUrl = toSafeExternalUrl(url);
+    if (!safeUrl) {
+      return {
+        ok: false,
+        error: 'Blocked unsafe URL.'
+      };
+    }
+
+    try {
+      await shell.openExternal(safeUrl);
+      return {
+        ok: true
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error?.message || 'Failed to open URL.'
+      };
+    }
   });
 };
 

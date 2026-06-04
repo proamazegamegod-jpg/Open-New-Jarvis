@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electron', {
   executeCommand: (command) => ipcRenderer.invoke('executeCommand', command),
   listCommands: () => ipcRenderer.invoke('listCommands'),
   saveCommand: (command) => ipcRenderer.invoke('saveCommand', command),
+  openExternalUrl: (url) => ipcRenderer.invoke('openExternalUrl', url),
   onSttPartial: (callback) => {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('stt:partial', listener);

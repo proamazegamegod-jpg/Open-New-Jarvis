@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import electronBridge, {
   assistantGreeting,
@@ -13,6 +13,9 @@ const emptyCommand = {
   steps: [''],
   confirm: false
 };
+const VOICE_TRIGGER_HOLD_MS = 5000;
+const VOICE_TRIGGER_COOLDOWN_MS = 1200;
+const VOICE_OPEN_YOUTUBE_SEARCH_REGEX = /^open youtube and search\s+(.+)$/;
 
 const DesktopApp = () => {
   const [transcript, setTranscript] = useState(
@@ -32,14 +35,90 @@ const DesktopApp = () => {
   const [lastSttAt, setLastSttAt] = useState(null);
   const [sttStatus, setSttStatus] = useState('Waiting');
   const [sttConnection, setSttConnection] = useState('Offline');
+  const [isHoldingVoiceTrigger, setIsHoldingVoiceTrigger] = useState(false);
+  const [voiceHoldProgress, setVoiceHoldProgress] = useState(0);
+  const [isVoiceTriggerArmed, setIsVoiceTriggerArmed] = useState(false);
+  const [isVoiceTriggerCoolingDown, setIsVoiceTriggerCoolingDown] = useState(false);
   const streamTimerRef = useRef(null);
   const requestIdRef = useRef(0);
   const cancelledRequestRef = useRef(null);
   const sttEnabledRef = useRef(true);
+  const sendMessageWithTextRef = useRef(null);
+  const voiceTriggerArmedRef = useRef(false);
+  const voiceTriggerCoolingDownRef = useRef(false);
+  const voiceTriggerKeyDownRef = useRef(false);
+  const voiceTriggerHoldStartedAtRef = useRef(0);
+  const voiceTriggerHoldTimerRef = useRef(null);
+  const voiceTriggerCooldownTimerRef = useRef(null);
 
   useEffect(() => {
     sttEnabledRef.current = sttEnabled;
   }, [sttEnabled]);
+
+  const startVoiceTriggerCooldown = () => {
+    if (voiceTriggerCooldownTimerRef.current) {
+      clearTimeout(voiceTriggerCooldownTimerRef.current);
+      voiceTriggerCooldownTimerRef.current = null;
+    }
+
+    voiceTriggerCoolingDownRef.current = true;
+    setIsVoiceTriggerCoolingDown(true);
+
+    voiceTriggerCooldownTimerRef.current = setTimeout(() => {
+      voiceTriggerCoolingDownRef.current = false;
+      setIsVoiceTriggerCoolingDown(false);
+      voiceTriggerCooldownTimerRef.current = null;
+    }, VOICE_TRIGGER_COOLDOWN_MS);
+  };
+
+  const handleVoiceTriggeredTranscript = async (spokenText) => {
+    const text = String(spokenText || '').trim();
+    if (!text) {
+      voiceTriggerArmedRef.current = false;
+      setIsVoiceTriggerArmed(false);
+      startVoiceTriggerCooldown();
+      return;
+    }
+
+    voiceTriggerArmedRef.current = false;
+    setIsVoiceTriggerArmed(false);
+    setFinalTranscript(text);
+    setTranscript(`Voice command: ${text}`);
+    setLastSttAt(Date.now());
+
+    const normalized = text.toLowerCase();
+    const youtubeSearchMatch = normalized.match(VOICE_OPEN_YOUTUBE_SEARCH_REGEX);
+    const openYouTube = async (url, successMessage, failureMessage) => {
+      const response = await electronBridge.openExternalUrl(url);
+      setCommandStatus(response?.ok ? successMessage : response?.error || failureMessage);
+    };
+
+    try {
+      if (normalized === 'open youtube') {
+        await openYouTube('https://www.youtube.com', 'Opened YouTube.', 'Unable to open YouTube.');
+      } else if (youtubeSearchMatch) {
+        const query = youtubeSearchMatch[1]?.trim();
+        if (!query) {
+          await openYouTube(
+            'https://www.youtube.com',
+            'Opened YouTube.',
+            'Unable to open YouTube.'
+          );
+        } else {
+          const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
+          await openYouTube(
+            url,
+            `Opened YouTube search for "${query}".`,
+            'Unable to open YouTube search.'
+          );
+        }
+      } else {
+        await sendMessageWithTextRef.current?.(text);
+      }
+    } finally {
+      startVoiceTriggerCooldown();
+    }
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -65,6 +144,11 @@ const DesktopApp = () => {
         }
         const text = payload.text ?? '';
         if (!text) {
+          return;
+        }
+
+        if (voiceTriggerArmedRef.current) {
+          void handleVoiceTriggeredTranscript(text);
           return;
         }
 
@@ -144,6 +228,12 @@ const DesktopApp = () => {
       if (streamTimerRef.current) {
         clearInterval(streamTimerRef.current);
       }
+      if (voiceTriggerHoldTimerRef.current) {
+        clearInterval(voiceTriggerHoldTimerRef.current);
+      }
+      if (voiceTriggerCooldownTimerRef.current) {
+        clearTimeout(voiceTriggerCooldownTimerRef.current);
+      }
     };
   }, []);
 
@@ -172,6 +262,97 @@ const DesktopApp = () => {
     return () => clearInterval(interval);
   }, [lastSttAt, sttConnection]);
 
+  useEffect(() => {
+    if (!electronBridge.isDesktop) {
+      return () => {};
+    }
+
+    const clearHold = () => {
+      if (voiceTriggerHoldTimerRef.current) {
+        clearInterval(voiceTriggerHoldTimerRef.current);
+        voiceTriggerHoldTimerRef.current = null;
+      }
+      voiceTriggerKeyDownRef.current = false;
+      setIsHoldingVoiceTrigger(false);
+      if (!voiceTriggerArmedRef.current) {
+        setVoiceHoldProgress(0);
+      }
+    };
+
+    const shouldIgnoreTarget = (target) => {
+      if (!target) {
+        return false;
+      }
+
+      const element = target;
+      const tag = element.tagName?.toLowerCase();
+      return (
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        element.isContentEditable === true
+      );
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key?.toLowerCase() !== 'r') {
+        return;
+      }
+
+      if (event.repeat || voiceTriggerKeyDownRef.current || shouldIgnoreTarget(event.target)) {
+        return;
+      }
+
+      if (voiceTriggerArmedRef.current || voiceTriggerCoolingDownRef.current) {
+        return;
+      }
+
+      voiceTriggerKeyDownRef.current = true;
+      voiceTriggerHoldStartedAtRef.current = Date.now();
+      setIsHoldingVoiceTrigger(true);
+      setVoiceHoldProgress(0);
+      setCommandStatus('Hold R to 100% to arm voice command mode.');
+
+      voiceTriggerHoldTimerRef.current = setInterval(() => {
+        const elapsed = Date.now() - voiceTriggerHoldStartedAtRef.current;
+        const progress = Math.min((elapsed / VOICE_TRIGGER_HOLD_MS) * 100, 100);
+        setVoiceHoldProgress(progress);
+
+        if (elapsed < VOICE_TRIGGER_HOLD_MS) {
+          return;
+        }
+
+        if (voiceTriggerHoldTimerRef.current) {
+          clearInterval(voiceTriggerHoldTimerRef.current);
+          voiceTriggerHoldTimerRef.current = null;
+        }
+        if (!voiceTriggerArmedRef.current) {
+          voiceTriggerArmedRef.current = true;
+          setIsVoiceTriggerArmed(true);
+          setTranscript('Voice trigger armed. Speak your command now.');
+          setCommandStatus('Voice trigger armed. Waiting for final STT transcript.');
+        }
+      }, 100);
+    };
+
+    const onKeyUp = (event) => {
+      if (event.key?.toLowerCase() !== 'r') {
+        return;
+      }
+
+      clearHold();
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      clearHold();
+    };
+  }, []);
+
   const memoryItems = useMemo(
     () => [
       { label: 'Mode', value: electronBridge.isDesktop ? 'Desktop live' : 'Browser demo' },
@@ -182,7 +363,7 @@ const DesktopApp = () => {
     [chatMessages.length, commandLibrary.length, sttStatus]
   );
 
-  const startStreaming = (fullText) => {
+  const startStreaming = useCallback((fullText) => {
     if (streamTimerRef.current) {
       clearInterval(streamTimerRef.current);
     }
@@ -210,7 +391,7 @@ const DesktopApp = () => {
         setIsStreaming(false);
       }
     }, 35);
-  };
+  }, []);
 
   const stopStreaming = () => {
     cancelledRequestRef.current = requestIdRef.current;
@@ -241,7 +422,7 @@ const DesktopApp = () => {
     setChatMessages(previous);
   };
 
-  const sendMessageWithText = async (messageText) => {
+  const sendMessageWithText = useCallback(async (messageText) => {
     const trimmed = String(messageText || '').trim();
     if (!trimmed) {
       return;
@@ -282,7 +463,19 @@ const DesktopApp = () => {
     }
 
     startStreaming(response.data?.content || 'No response returned.');
-  };
+  }, [chatMessages, startStreaming]);
+
+  useEffect(() => {
+    sendMessageWithTextRef.current = sendMessageWithText;
+  }, [sendMessageWithText]);
+
+  const voiceTriggerMessage = isVoiceTriggerArmed
+    ? 'Voice trigger is active and waiting for your next spoken command.'
+    : isVoiceTriggerCoolingDown
+      ? 'Voice trigger cooling down...'
+      : isHoldingVoiceTrigger
+        ? `Hold R progress: ${Math.round(voiceHoldProgress)}%`
+        : 'Hold R for 5 seconds to arm voice command capture.';
 
   const sendMessage = async () => {
     const messageText = input.trim();
@@ -395,6 +588,19 @@ const DesktopApp = () => {
             {finalTranscript && <p className="desktop-copy">Final: {finalTranscript}</p>}
             <p className="desktop-copy">STT: {sttStatus}</p>
             <p className="desktop-copy">Connection: {sttConnection}</p>
+            {electronBridge.isDesktop && (
+              <>
+                <p className="desktop-copy">
+                  {voiceTriggerMessage}
+                </p>
+                <div className="voice-hold-progress" aria-hidden="true">
+                  <div
+                    className={`voice-hold-progress-bar${isVoiceTriggerArmed ? ' active' : ''}`}
+                    style={{ width: `${isVoiceTriggerArmed ? 100 : voiceHoldProgress}%` }}
+                  />
+                </div>
+              </>
+            )}
             {electronBridge.isDesktop && (
               <div className="stt-actions">
                 <button
