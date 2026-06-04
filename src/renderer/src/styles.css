@@ -47,6 +47,18 @@ input {
   background: #0d1117;
 }
 
+.landing-entry {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.landing-entry-button {
+  min-width: 240px;
+  font-size: 1.1rem;
+  letter-spacing: 0.2em;
+}
+
 .topbar,
 .page,
 .site-footer,
@@ -281,6 +293,13 @@ a:hover {
 .button.primary {
   background: #ffc000;
   color: #000000;
+}
+
+.hero-cta {
+  font-size: 1.05rem;
+  letter-spacing: 0.18em;
+  padding: 1.1rem 2.2rem;
+  box-shadow: 0 0 24px rgba(255, 192, 0, 0.25);
 }
 
 .button.primary:hover:not(:disabled),
@@ -536,6 +555,12 @@ a:hover {
   display: inline-flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+.stt-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
 }
 
 .panel-header p {

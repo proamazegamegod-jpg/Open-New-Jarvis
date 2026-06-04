@@ -46,6 +46,12 @@ const createWindow = () => {
         return;
       }
       mainWindow.webContents.send('stt:partial', payload);
+    },
+    onFinal: (payload) => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
+      }
+      mainWindow.webContents.send('stt:final', payload);
     }
   });
 };

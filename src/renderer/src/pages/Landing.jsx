@@ -108,11 +108,6 @@ const Landing = () => {
           <a className="utility-link" href={electronBridge.repositoryUrl} target="_blank" rel="noreferrer">
             GitHub
           </a>
-          {electronBridge.isDesktop && (
-            <Link className="utility-link" to="/app">
-              Open app
-            </Link>
-          )}
         </nav>
       </header>
 
@@ -127,8 +122,11 @@ const Landing = () => {
             </p>
 
             <div className="hero-actions">
+              <Link className="button primary hero-cta" to="/app">
+                ENTER THE APP
+              </Link>
               <a
-                className="button primary"
+                className="button secondary"
                 href={electronBridge.releaseUrl}
                 target="_blank"
                 rel="noreferrer"
@@ -138,11 +136,6 @@ const Landing = () => {
               <button className="button secondary" onClick={scrollToPreview}>
                 See product preview
               </button>
-              {electronBridge.isDesktop && (
-                <Link className="button secondary" to="/app">
-                  Open desktop app
-                </Link>
-              )}
             </div>
 
             <p className="mode-description">
@@ -245,19 +238,17 @@ const Landing = () => {
               </p>
             </div>
             <div className="hero-actions">
+              <Link className="button primary hero-cta" to="/app">
+                ENTER THE APP
+              </Link>
               <a
-                className="button primary"
+                className="button secondary"
                 href={electronBridge.releaseUrl}
                 target="_blank"
                 rel="noreferrer"
               >
                 Download for desktop
               </a>
-              {electronBridge.isDesktop && (
-                <Link className="button secondary" to="/app">
-                  Open desktop app
-                </Link>
-              )}
             </div>
           </article>
         </section>

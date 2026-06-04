@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const createSttClient = ({ url, onPartial }) => {
+const createSttClient = ({ url, onPartial, onFinal }) => {
   let socket;
   let active = true;
 
@@ -23,7 +23,11 @@ const createSttClient = ({ url, onPartial }) => {
         }
       }
 
-      // TODO: Replace with real STT protocol handling.
+      if (payload.type === 'final' && onFinal) {
+        onFinal(payload);
+        return;
+      }
+
       if (onPartial) {
         onPartial(payload);
       }

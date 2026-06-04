@@ -124,6 +124,9 @@ const fallbackBridge = {
   },
   onSttPartial() {
     return () => {};
+  },
+  onSttFinal() {
+    return () => {};
   }
 };
 

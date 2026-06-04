@@ -15,7 +15,10 @@ const emptyCommand = {
 };
 
 const DesktopApp = () => {
-  const [transcript, setTranscript] = useState(demoTranscript);
+  const [transcript, setTranscript] = useState(
+    electronBridge.isDesktop ? '' : demoTranscript
+  );
+  const [finalTranscript, setFinalTranscript] = useState('');
   const [input, setInput] = useState('');
   const [chatMessages, setChatMessages] = useState(demoMessages);
   const [conversationHistory, setConversationHistory] = useState([]);
@@ -25,11 +28,17 @@ const DesktopApp = () => {
   const [validationResult, setValidationResult] = useState(null);
   const [commandStatus, setCommandStatus] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [sttEnabled, setSttEnabled] = useState(true);
   const [lastSttAt, setLastSttAt] = useState(null);
   const [sttStatus, setSttStatus] = useState('Waiting');
   const streamTimerRef = useRef(null);
   const requestIdRef = useRef(0);
   const cancelledRequestRef = useRef(null);
+  const sttEnabledRef = useRef(true);
+
+  useEffect(() => {
+    sttEnabledRef.current = sttEnabled;
+  }, [sttEnabled]);
 
   useEffect(() => {
     let isMounted = true;
@@ -41,10 +50,60 @@ const DesktopApp = () => {
           return;
         }
 
+        if (!sttEnabledRef.current) {
+          return;
+        }
+
         const text = payload.text ?? payload.partial ?? payload;
         setTranscript(String(text));
         setLastSttAt(Date.now());
       });
+      const unsubscribeFinal = electronBridge.onSttFinal((payload) => {
+        if (!payload || !isMounted) {
+          return;
+        }
+        const text = payload.text ?? '';
+        if (!text) {
+          return;
+        }
+
+        const normalized = text.toLowerCase().trim();
+        const isStopCommand =
+          normalized === 'stop' ||
+          normalized.includes('stop listening') ||
+          normalized.includes('stop transcription');
+        const isStartCommand =
+          normalized === 'start' ||
+          normalized.includes('start listening') ||
+          normalized.includes('resume listening');
+
+        if (isStartCommand) {
+          setSttEnabled(true);
+          setTranscript('STT resumed.');
+          setFinalTranscript(text);
+          setLastSttAt(Date.now());
+          return;
+        }
+
+        if (!sttEnabledRef.current) {
+          return;
+        }
+
+        if (isStopCommand) {
+          setSttEnabled(false);
+          setTranscript('STT paused.');
+          setFinalTranscript(text);
+          setLastSttAt(Date.now());
+          return;
+        }
+
+        setFinalTranscript(text);
+      });
+      const previousUnsubscribe = unsubscribe;
+      unsubscribe = () => {
+        previousUnsubscribe();
+        unsubscribeFinal();
+      };
     }
 
     electronBridge.listCommands().then((result) => {
@@ -67,6 +126,10 @@ const DesktopApp = () => {
     const interval = setInterval(() => {
       if (!electronBridge.isDesktop) {
         setSttStatus('Preview');
+        return;
+      }
+      if (!sttEnabledRef.current) {
+        setSttStatus('Off');
         return;
       }
       if (!lastSttAt) {
@@ -149,9 +212,9 @@ const DesktopApp = () => {
     setChatMessages(previous);
   };
 
-  const sendMessage = async () => {
-    const messageText = input.trim();
-    if (!messageText) {
+  const sendMessageWithText = async (messageText) => {
+    const trimmed = String(messageText || '').trim();
+    if (!trimmed) {
       return;
     }
 
@@ -161,7 +224,7 @@ const DesktopApp = () => {
     const outgoingMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      content: messageText
+      content: trimmed
     };
     const nextMessages = [...chatMessages, outgoingMessage];
 
@@ -190,6 +253,14 @@ const DesktopApp = () => {
     }
 
     startStreaming(response.data?.content || 'No response returned.');
+  };
+
+  const sendMessage = async () => {
+    const messageText = input.trim();
+    if (!messageText) {
+      return;
+    }
+    await sendMessageWithText(messageText);
   };
 
   const openEditor = (command) => {
@@ -289,8 +360,21 @@ const DesktopApp = () => {
 
           <section className="desktop-panel">
             <span className="eyebrow">Live transcript</span>
-            <p className="desktop-copy">{transcript || 'Waiting for transcript...'}</p>
+            <p className="desktop-copy">
+              {transcript || (electronBridge.isDesktop ? 'Waiting for transcript...' : demoTranscript)}
+            </p>
+            {finalTranscript && <p className="desktop-copy">Final: {finalTranscript}</p>}
             <p className="desktop-copy">STT: {sttStatus}</p>
+            {electronBridge.isDesktop && (
+              <div className="stt-actions">
+                <button
+                  className="button secondary"
+                  onClick={() => setSttEnabled((prev) => !prev)}
+                >
+                  {sttEnabled ? 'Stop listening' : 'Start listening'}
+                </button>
+              </div>
+            )}
           </section>
         </aside>
 
@@ -335,6 +419,13 @@ const DesktopApp = () => {
             />
             <button className="button primary" onClick={sendMessage}>
               Send
+            </button>
+            <button
+              className="button secondary"
+              onClick={() => sendMessageWithText(finalTranscript || transcript)}
+              disabled={!finalTranscript && !transcript}
+            >
+              Voice → Gemini
             </button>
           </div>
         </section>

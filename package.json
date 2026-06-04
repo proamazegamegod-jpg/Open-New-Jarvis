@@ -8,7 +8,8 @@
     "build:electron": "cross-env BUILD_TARGET=electron vite build",
     "renderer": "cross-env NODE_ENV=development vite",
     "electron": "cross-env NODE_ENV=development wait-on http://localhost:5173 && electron .",
-    "stt": "node .\\scripts\\stt-server-placeholder.js",
+    "stt": "powershell -ExecutionPolicy Bypass -File .\\scripts\\stt-runner.ps1",
+    "stt:mock": "powershell -ExecutionPolicy Bypass -File .\\scripts\\stt-runner.ps1 --mock",
     "dev": "concurrently \"npm:renderer\" \"npm:stt\" \"npm:electron\"",
     "start": "npm run dev",
     "preview": "vite preview --host"

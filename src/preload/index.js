@@ -12,5 +12,10 @@ contextBridge.exposeInMainWorld('electron', {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on('stt:partial', listener);
     return () => ipcRenderer.removeListener('stt:partial', listener);
+  },
+  onSttFinal: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on('stt:final', listener);
+    return () => ipcRenderer.removeListener('stt:final', listener);
   }
 });
